@@ -4,6 +4,10 @@
 # Archivos generados por scripts (outputs/)
 outputs/
 
+# NOTA: Los archivos .md de documentación y planificación
+# (PLAN_PRODUCTO.md, LEEME.md, docs/*.md, READMEs) SÍ se commitean.
+# No ignorar *.md aquí.
+
 # Caché y archivos compilados de Python
 __pycache__/
 *.pyc
