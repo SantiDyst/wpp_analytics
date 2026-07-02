@@ -3,8 +3,10 @@ import re
 import time
 from pathlib import Path
 
-base_dir = Path(__file__).parent
-report_path = base_dir / 'reporte_contexto_v2.md'
+base_dir = Path(__file__).parent.parent
+output_dir = base_dir / 'outputs'
+output_dir.mkdir(exist_ok=True)
+report_path = output_dir / 'reporte_contexto_v2.md'
 
 def remove_think_tags(text):
     if not text:

@@ -12,7 +12,7 @@ Este documento detalla el plan acordado para transformar el módulo de analític
 #### 1. Modificaciones en el Código Principal
 
 Se realizarán los siguientes cambios en [[analizar_contexto.py]]:
-*   **Ajuste del Tamaño de Lote:** Configurar `lote_size = 50` para procesar los chats en grupos de 50 contactos.
+*   **Ajuste del Tamaño de Lote:** Configurar `lote_size = 100` para procesar los chats en grupos de 100 contactos.
 *   **Prompt de Perfilado Relacional:** Sustituir el análisis de "reconocimientos médicos" por instrucciones específicas para identificar:
     *   **Categoría Ocupacional:** Clasificación del contacto (Empresario/Emprendedor, Estudiante, Desempleado u Otro).
     *   **Allegados:** Vínculos familiares o laborales mencionados.
@@ -28,10 +28,10 @@ Se realizarán los siguientes cambios en [[analizar_contexto.py]]:
 #### 2. Ciclo Interactivo en Consola y Menú de Inicio
 
 *   **Menú de Selección de Modo:** Al iniciar, el programa permite seleccionar entre:
-    *   `Opción 1`: Procesar en lotes de 50 con confirmación manual para continuar.
+    *   `Opción 1`: Procesar en lotes de 100 con confirmación manual para continuar.
     *   `Opción 2`: Procesar todos los contactos de forma automática y secuencial sin detener el script.
 *   El script procesará los contactos individualmente y los guardará directamente en la base de datos local SQLite.
-*   **Compilador Local:** El archivo [[reporte_contexto_v2.md]] se creará de forma local mediante Python, leyendo todos los perfiles guardados de SQLite. Esto elimina el cuello de botella del límite de tokens de salida de la API de raíz.
+*   **Compilador Local:** El archivo [[reporte_contexto_vxx.md]] se creará de forma local mediante Python, leyendo todos los perfiles guardados de SQLite. Esto elimina el cuello de botella del límite de tokens de salida de la API de raíz.
 
 ---
 

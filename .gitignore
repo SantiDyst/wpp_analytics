@@ -1,9 +1,8 @@
 # Entorno y Configuración Sensible (¡CRÍTICO NO SUBIR A GITHUB!)
 .env
 
-# Archivos de Registro y Salida Local
-logs.txt
-reporte_contexto.md
+# Archivos generados por scripts (outputs/)
+outputs/
 
 # Caché y archivos compilados de Python
 __pycache__/

@@ -8,10 +8,12 @@ import random
 from pathlib import Path
 
 # Configurar rutas locales
-base_dir = Path(__file__).parent
+base_dir = Path(__file__).parent.parent
 env_path = base_dir / '.env'
-report_path = base_dir / 'reporte_contexto_v2.md'
-log_file_path = base_dir / 'logs.txt'
+output_dir = base_dir / 'outputs'
+output_dir.mkdir(exist_ok=True)
+report_path = output_dir / 'reporte_contexto_v2.md'
+log_file_path = output_dir / 'logs.txt'
 
 # Cargar API Key, Modelo y Base URL desde archivo .env si existe
 api_key = ""

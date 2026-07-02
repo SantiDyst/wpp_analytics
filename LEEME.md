@@ -8,35 +8,79 @@ Este repositorio independiente se encarga de analizar los datos históricos guar
 
 1.  **Python 3** instalado en el sistema.
 2.  Una base de datos activa con chats guardados en `C:\Users\Atencion online 2\Desktop\auto_wpp\database\whatsapp.sqlite`.
-3.  Una clave de API de **Google Gemini** (Gemini API Key).
+3.  Una clave de API de **Google Gemini** o compatible (MiniMax, OpenAI).
 
 ---
 
 #### Instrucciones de Configuración y Uso
 
 1.  **Configurar Clave de API:**
-    *   Crea un archivo llamado **`.env`** en la raíz de esta carpeta (`wpp_analytics`).
-    *   Agrega la siguiente línea con tu clave de API de Google Gemini:
-        ```text
-        GEMINI_API_KEY=tu_clave_aqui
-        ```
+    *   El archivo **`.env`** ya existe en la raíz con tu clave de Gemini.
+    *   Si necesitás regenerarlo, agregá: `GEMINI_API_KEY=tu_clave_aqui`
 
-2.  **Ejecutar el Análisis:**
-    *   Abre una terminal en esta carpeta y ejecuta:
-        ```powershell
-        python analizar_contexto.py
-        ```
+2.  **Ejecutar el Análisis General:**
+    *   Doble clic en `ejecutar_analisis.bat`, o:
+    ```powershell
+    python scripts\analizar_contexto.py
+    ```
+    *   Perfila los contactos uno por uno con IA y guarda resultados en `outputs/`.
 
-3.  **Resultado:**
-    *   El script extraerá automáticamente una muestra representativa de **100 chats individuales** al azar.
-    *   Filtrará redundancias (respuestas automáticas o spam repetido) y codificará los archivos multimedia como marcadores ligeros para ahorrar tokens.
-    *   Enviará esta muestra limpia a la API de Gemini (usando librerías estándar nativas sin requerir paquetes externos de pip).
-    *   Generará el reporte final de diagnóstico temático en el archivo **`reporte_contexto.md`**.
+3.  **Búsqueda Dinámica en Chats:**
+    *   Modo keyword (SQL puro, sin gastar API):
+    ```powershell
+    python scripts\buscar_datos.py --db auto_wpp --mode keyword --query "acta"
+    ```
+    *   Modo semántico (con IA + taxonomía):
+    ```powershell
+    python scripts\buscar_datos.py --db auto_wpp --mode semantic --query "clientes que pidieron reenvío de acta" --classify --limit 10
+    ```
+
+4.  **Resultado:**
+    *   Los reportes se generan en `outputs/`.
+    *   Los perfiles de contactos quedan guardados en la base SQLite del cliente.
 
 ---
 
-#### Estructura de Archivos del Módulo
+#### Estructura del Proyecto
 
-*   **`analizar_contexto.py`**: Script principal de procesamiento, extracción y comunicación con la API de Gemini.
-*   **`.env`**: Archivo de configuración local (no se debe compartir en repositorios públicos).
-*   **`reporte_contexto.md`**: Reporte generado por la IA detallando el contexto general y las categorías de clasificación descubiertas.
+```
+wpp_analytics/
+├── .env                          ← API key (no subir a git)
+├── .gitignore
+├── LEEME.md                      ← este archivo
+├── PLAN_PRODUCTO.md              ← plan maestro del producto (pipeline 3 etapas)
+├── ejecutar_analisis.bat         ← lanzador del análisis principal
+│
+├── scripts/                      ← scripts ejecutables
+│   ├── analizar_contexto.py      ← pipeline Etapa 1 (perfilado general)
+│   ├── buscar_datos.py           ← buscador dinámico (Etapa 3 inicial)
+│   └── clean_db.py               ← limpieza de bloques <think> en perfiles guardados
+│
+├── docs/                         ← documentación de referencia
+│   ├── propuesta_comercial.md    ← 3 planes comerciales
+│   ├── reporte_contexto.md       ← análisis histórico (Reconocimientos Médicos)
+│   ├── analytics_version_2.md    ← plan original V2 (referencia)
+│   ├── skills_feature.md         ← diseño histórico de la Skill
+│   └── sql_features.md           ← propuestas de optimización SQL
+│
+├── outputs/                      ← archivos generados (ignorado por git)
+│   ├── logs.txt
+│   └── reporte_contexto_v2.md
+│
+├── taxonomias_seed/              ← taxonomías por industria (Fase 3)
+│
+├── skills/                       ← empaquetado para agentes de IA (Fase 5)
+│   └── whatsapp_assistant/
+│
+├── tests/                        ← tests automatizados (futuro)
+│
+└── 99_archivo/                   ← histórico/deprecado (no tocar)
+```
+
+---
+
+#### Roadmap
+
+Ver [`PLAN_PRODUCTO.md`](./PLAN_PRODUCTO.md) para el plan completo de evolución del producto en 10 fases.
+
+Estado actual: **Fase 0 completada** (estructura ordenada + `buscar_datos.py` operativo).
