@@ -1,0 +1,33 @@
+# OpenSpec Configuration — wpp_analytics
+schema: spec-driven
+
+context: |
+  Python 3.14 / stdlib + optional (rich, pyyaml, flask).
+  Scripts: analizar_contexto.py, buscar_datos.py, clean_db.py.
+  API: Gemini (urllib) or OpenAI/MiniMax-compatible via GEMINI_API_KEY in .env.
+  No test runner, no linter, no formatter installed.
+  Project docs in Spanish; code comments and artifacts default to English.
+  Strict TDD: disabled (no test framework available).
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    - Follow existing code patterns
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas

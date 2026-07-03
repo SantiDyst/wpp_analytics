@@ -1,0 +1,1 @@
+"C:\Users\Atencion online 2\Desktop\auto_wpp\database\whatsapp.sqlite"

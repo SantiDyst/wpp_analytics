@@ -34,7 +34,7 @@ Este documento describe el plan completo para evolucionar `wpp_analytics` desde 
 
 **Estado actual (`analizar_contexto.py`):**
 *   Toma muestra aleatoria de 100 chats.
-*   Envía a Gemini para descubrir temáticas generales.
+*   Envía a la IA para descubrir temáticas generales.
 *   Genera solo `reporte_contexto.md`.
 
 **Mejoras requeridas:**

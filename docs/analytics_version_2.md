@@ -14,7 +14,7 @@ Este documento detalla el plan acordado para transformar el módulo de analític
 Se realizarán los siguientes cambios en [[analizar_contexto.py]]:
 *   **Ajuste del Tamaño de Lote:** Configurar `lote_size = 100` para procesar los chats en grupos de 100 contactos.
 *   **Prompt de Perfilado Relacional:** Sustituir el análisis de "reconocimientos médicos" por instrucciones específicas para identificar:
-    *   **Categoría Ocupacional:** Clasificación del contacto (Empresario/Emprendedor, Estudiante, Desempleado u Otro).
+    *   **Categoría Ocupacional:** Clasificación del contacto (Empresario/Emprendedor, Estudiante, Desempleado, Personal u Otro).
     *   **Allegados:** Vínculos familiares o laborales mencionados.
     *   **Temas Principales:** Tópicos recurrentes de conversación.
     *   **Dinámica Relacional:** Tipo de relación y tono dominante.

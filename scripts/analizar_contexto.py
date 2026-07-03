@@ -215,7 +215,7 @@ def llamar_api(prompt, current_report=None, is_individual=False):
     if is_individual:
         instrucciones = (
             "Analiza la siguiente conversación de WhatsApp entre 'Nosotros' (Usuario Principal) y un 'Cliente/Contacto' e identifica:\n"
-            "1. Categoría Ocupacional: Clasifica al contacto en [Empresario/Emprendedor], [Estudiante], [Desempleado] u [Otro/Indet.] con su respectiva justificación textual basada en evidencias del chat.\n"
+            "1. Categoría Ocupacional: Clasifica al contacto en [Empresario/Emprendedor], [Estudiante], [Desempleado], [Personal] u [Otro/Indet.] con su respectiva justificación textual basada en evidencias del chat.\n"
             "2. Allegados y Círculo Social: Identifica nombres de terceros mencionados en el chat y su parentesco o vínculo con el contacto (ej. esposa, hijo, socio, amigo).\n"
             "3. Temas Principales: Los 3 asuntos o tópicos de conversación más recurrentes entre ambos.\n"
             "4. Dinámica Relacional: Define el tipo de relación (comercial, familiar, amistosa) y el tono dominante de la interacción (formal, casual, tenso, cordial).\n\n"
@@ -240,7 +240,7 @@ def llamar_api(prompt, current_report=None, is_individual=False):
     else:
         instrucciones = (
             "Analiza el siguiente conjunto de conversaciones de WhatsApp de diversos contactos e identifica para cada uno:\n"
-            "1. Categoría Ocupacional: Clasifica al contacto en [Empresario/Emprendedor], [Estudiante], [Desempleado] o [Otro] con su respectiva justificación textual basada en evidencias del chat.\n"
+            "1. Categoría Ocupacional: Clasifica al contacto en [Empresario/Emprendedor], [Estudiante], [Desempleado], [Personal] o [Otro] con su respectiva justificación textual basada en evidencias del chat.\n"
             "2. Allegados y Círculo Social: Identifica nombres de terceros mencionados y su parentesco o vínculo con el contacto (ej. esposa, hijo, socio, amigo).\n"
             "3. Temas Principales: Los 3 asuntos o tópicos de conversación más recurrentes.\n"
             "4. Dinámica Relacional: Define el tipo de relación (comercial, familiar, amistosa) y el tono dominante de la interacción (formal, casual, tenso, cordial).\n\n"
