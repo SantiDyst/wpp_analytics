@@ -16,6 +16,17 @@ Chained PRs recommended: No
 Chain strategy: N/A
 400-line budget risk: Low
 
+## Tasks Checklist
+
+- [x] **T-001** — Create seed YAML file (`taxonomias_seed/medical_licenses.yaml`)
+- [x] **T-002** — Document pyyaml dependency in `LEEME.md`
+- [x] **T-003** — Implement `load_taxonomy(client_name)` function with fallback paths
+- [x] **T-004** — Wire `load_taxonomy()` into `modo_semantic()`
+- [x] **T-005** — Implement `bootstrap_taxonomy.py` CLI
+- [x] **T-006** — Run bootstrap to materialize per-client taxonomy
+- [x] **T-007** — Execute manual verification matrix
+- [x] **T-008** — Final review and cleanup (diff footprint, TAXONOMIA refs, gitignore note)
+
 ### Suggested Work Units
 
 | Unit | Goal | PR | Notes |
