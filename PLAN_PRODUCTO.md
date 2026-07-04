@@ -236,7 +236,7 @@ Esto encaja con los 3 planes definidos en `propuesta_comercial.md`.
 | `PLAN_PRODUCTO.md` | Este documento (plan maestro). | Actualizado. |
 | `ejecutar_analisis.bat` | Lanzador del análisis principal. | Actualizado. |
 | `scripts/analizar_contexto.py` | Pipeline de perfilado general (Etapa 1). | Funcional, requiere mejoras. |
-| `scripts/buscar_datos.py` | Buscador dinámico keyword + semantic (Etapa 3 inicial). | Funcional, requiere mejoras. |
+| `scripts/buscar_datos.py` | Buscador dinámico; carga taxonomía desde YAML (Fase 2 cerrada). | Funcional, requiere mejoras. |
 | `scripts/clean_db.py` | Limpia bloques `<think>` de perfiles guardados. | Funcional. |
 | `docs/propuesta_comercial.md` | 3 planes comerciales (Express / Activo / VIP). | Solo referencia. |
 | `docs/reporte_contexto.md` | Reporte de Reconocimientos Médicos (análisis previo). | Solo referencia. |
@@ -244,7 +244,7 @@ Esto encaja con los 3 planes definidos en `propuesta_comercial.md`.
 | `docs/skills_feature.md` | Diseño de la Skill `whatsapp_assistant`. | Solo referencia (ahora integrado en este PLAN). |
 | `docs/sql_features.md` | Diagnóstico y propuestas de optimización SQL (FTS5, normalización). | Solo referencia (Fase futura). |
 | `outputs/` | Archivos generados (`logs.txt`, `reporte_contexto_v2.md`). | Ignorado por git. |
-| `taxonomias_seed/` | Taxonomías semilla por industria (Fase 3). | Vacío, pendiente. |
+| `taxonomias_seed/` | Taxonomías semilla por industria (Fase 3). | Contiene `medical_licenses.yaml` (Fase 2); faltan las otras industrias (Fase 3). |
 | `skills/whatsapp_assistant/` | Empaquetado de Skill para agentes IA (Fase 5). | Vacío, pendiente. |
 | `tests/` | Tests automatizados. | Vacío, pendiente. |
 | `99_archivo/` | Histórico/deprecado. | No tocar. |
@@ -252,7 +252,7 @@ Esto encaja con los 3 planes definidos en `propuesta_comercial.md`.
 
 ---
 
-#### Estado Actual del Proyecto (al 2026-07-02)
+#### Estado Actual del Proyecto (al 2026-07-04)
 
 **Hecho:**
 *   `scripts/analizar_contexto.py` funcional con perfilado individual por contacto, lotes, caché local, compilación de reporte V2 en `outputs/`.
@@ -261,6 +261,13 @@ Esto encaja con los 3 planes definidos en `propuesta_comercial.md`.
 *   **Estructura del proyecto ordenada** (Fase 0): `scripts/`, `docs/`, `outputs/`, `taxonomias_seed/`, `skills/`, `tests/`.
 *   `.gitignore` actualizado para ignorar `outputs/`.
 *   `LEEME.md` y `PLAN_PRODUCTO.md` reflejan la nueva estructura.
+
+**Cerrado en esta sesión (2026-07-04) — Fase 2 del roadmap:**
+*   **Fase 2 — taxonomía YAML externa** ✅: `scripts/buscar_datos.py` carga la taxonomía desde `outputs/taxonomia_<client>_v1.yaml` mediante la nueva función `load_taxonomy(client_name)` con fallback al string hardcoded si el YAML falta, está vacío, está malformado o `pyyaml` no está instalado. La función sanitiza el nombre de cliente (`re.sub(r"[^A-Za-z0-9_-]", "_", client_name)`) por seguridad de filename.
+*   Nuevo CLI **one-shot** `scripts/bootstrap_taxonomy.py` que materializa `outputs/taxonomia_<client>_v1.yaml` desde el seed `taxonomias_seed/medical_licenses.yaml`.
+*   Spec archivado en `openspec/changes/archive/2026-07-04-phase-2-taxonomy-yaml/` con su `archive-report.md`; main spec residente en `openspec/specs/taxonomy-yaml/spec.md` como fuente de verdad (7 requisitos REQ-001 a REQ-007, 8 escenarios).
+*   Commits del cierre: `e3534fb feat(taxonomy): phase 2 YAML taxonomy loader + bootstrap CLI` y `e682731 chore(openspec): archive phase-2-taxonomy-yaml and sync main spec` (sin push todavía).
+*   `LEEME.md` documenta `pip install pyyaml` como dependencia opcional (la pipeline sigue funcionando sin él, vía fallback).
 
 **Pendiente (según roadmap):**
 *   Fases 1-10 listadas arriba.
