@@ -401,7 +401,7 @@ def main():
     if args.mode == "keyword":
         modo_keyword(db_path, args.query, args.limit)
     else:
-        classify = args.classify or True
+        classify = args.classify
         modo_semantic(db_path, args.query, args.limit, classify)
 
 
