@@ -4,10 +4,11 @@ Taxonomías semilla por industria. Sirven como punto de partida para la Etapa 2 
 
 ## Estructura
 
-- `salud.yaml` — Reconocimientos Médicos, licencias, turnos, actas, etc.
-- `educacion.yaml` — Docentes, escuelas, licencias por artículo, etc.
-- `retail.yaml` — Comercios, ventas, presupuestos, stock.
-- `servicios_profesionales.yaml` — Abogados, contadores, estudios.
+- `educacion.yaml` — sector educativo: inscripciones, docentes, licencias, estudiantes.
+- `general.yaml` — categoría transversal para consultas generales, precios y horarios.
+- `personal.yaml` — uso individual y social: acciones de chat, coordinaciones y expresiones.
+- `retail.yaml` — comercios, ventas, presupuestos, stock, clientes y devoluciones.
+- `salud.yaml` — sector salud: turnos, recetas, resultados, cobertura y facturación.
 
 ## Convención de nombres
 
