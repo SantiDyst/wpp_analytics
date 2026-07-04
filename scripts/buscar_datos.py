@@ -10,6 +10,14 @@ import time
 from pathlib import Path
 
 try:
+    import yaml
+except ImportError:
+    yaml = None
+_HAS_YAML = yaml is not None
+_yaml_warned = False
+
+
+try:
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
 except Exception:
@@ -29,6 +37,77 @@ LICENCIAS_MEDICAS
 INFORMACION_AGENTE: INFO_AGENTE_ALTA_NUEVO_REGISTRO | INFO_AGENTE_ACTUALIZACION_DATOS
 CONSULTAS_VARIAS: CONS_VARIAS_GENERAL | CONS_VARIAS_QUEJA_RECLAMO | CONS_VARIAS_FUERA_DE_AMBITO
 """
+
+def load_taxonomy(client_name: str) -> str:
+    global _yaml_warned
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", client_name)
+    
+    if not _HAS_YAML:
+        if not _yaml_warned:
+            sys.stderr.write("WARN: taxonomy-loader: pyyaml not installed; using hardcoded TAXONOMIA fallback\n")
+            _yaml_warned = True
+        return TAXONOMIA
+    
+    rel_path = f"outputs/taxonomia_{safe}_v1.yaml"
+    path = base_dir / rel_path
+    
+    if not path.exists():
+        sys.stderr.write(f"WARN: taxonomy-loader: file missing at {rel_path}; using hardcoded TAXONOMIA fallback\n")
+        return TAXONOMIA
+        
+    try:
+        if path.stat().st_size == 0:
+            sys.stderr.write(f"WARN: taxonomy-loader: file empty at {rel_path}; using hardcoded TAXONOMIA fallback\n")
+            return TAXONOMIA
+    except Exception:
+        sys.stderr.write(f"WARN: taxonomy-loader: file missing at {rel_path}; using hardcoded TAXONOMIA fallback\n")
+        return TAXONOMIA
+        
+    try:
+        text = path.read_text(encoding='utf-8')
+        data = yaml.safe_load(text)
+    except Exception as e:
+        sys.stderr.write(f"WARN: taxonomy-loader: yaml parse error at {rel_path} ({str(e)}); using hardcoded TAXONOMIA fallback\n")
+        return TAXONOMIA
+        
+    if data is None or not isinstance(data, dict):
+        sys.stderr.write(f"WARN: taxonomy-loader: yaml parse error at {rel_path} (YAML did not yield a mapping); using hardcoded TAXONOMIA fallback\n")
+        return TAXONOMIA
+
+    if 'categories' not in data or not isinstance(data['categories'], dict):
+        sys.stderr.write(f"WARN: taxonomy-loader: invalid structure at {rel_path} (missing 'categories' key); using hardcoded TAXONOMIA fallback\n")
+        return TAXONOMIA
+        
+    categories = data['categories']
+    for cat_name, subcats in categories.items():
+        if not isinstance(subcats, dict):
+            sys.stderr.write(f"WARN: taxonomy-loader: invalid structure at {rel_path} (category '{cat_name}' is not a dict); using hardcoded TAXONOMIA fallback\n")
+            return TAXONOMIA
+        for sub_name, tags in subcats.items():
+            if not isinstance(tags, list) or not tags:
+                sys.stderr.write(f"WARN: taxonomy-loader: invalid structure at {rel_path} (subcategory '{sub_name}' must be a non-empty list); using hardcoded TAXONOMIA fallback\n")
+                return TAXONOMIA
+            for tag in tags:
+                if not isinstance(tag, str) or not tag:
+                    sys.stderr.write(f"WARN: taxonomy-loader: invalid structure at {rel_path} (tag in '{sub_name}' must be a non-empty string); using hardcoded TAXONOMIA fallback\n")
+                    return TAXONOMIA
+                    
+    parts = []
+    for cat_name, subcats in categories.items():
+        collapsed = all(
+            isinstance(tags, list) and len(tags) == 1 and tags[0] == sub_name
+            for sub_name, tags in subcats.items()
+        )
+        if collapsed:
+            parts.append(f"{cat_name}: {' | '.join(subcats.keys())}")
+        else:
+            lines = [cat_name]
+            for sub_name, tags in subcats.items():
+                lines.append(f"  {sub_name}: {' | '.join(tags)}")
+            parts.append("\n".join(lines))
+            
+    return "\n" + "\n".join(parts) + "\n"
+
 
 PALABRAS_DOMINIO = [
     "acta", "actas", "turno", "turnos", "medico", "médico", "fiscal", "fiscales",
@@ -253,12 +332,15 @@ def modo_semantic(db_path, query, limit, classify):
 
     print(f"[INFO] {len(contactos)} contacto(s) candidato(s). Consultando IA...\n")
 
+    nombre_db = Path(db_path).parent.parent.name
+    taxonomy_text = load_taxonomy(nombre_db) if classify else ""
+
     instrucciones_extra = ""
     if classify:
         instrucciones_extra = (
             "Además, clasifica cada coincidencia encontrada según la siguiente taxonomía del dominio "
             "(Reconocimientos Médicos - licencias para empleados públicos):\n\n"
-            f"{TAXONOMIA}\n"
+            f"{taxonomy_text}\n"
             "Indica la ruta taxonómica exacta (ej. LICENCIAS_MEDICAS > RECEPCION_ACTA > REC_ACTA_NO_RECIBIDA).\n"
         )
 

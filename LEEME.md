@@ -9,6 +9,7 @@ Este repositorio independiente se encarga de analizar los datos históricos guar
 1.  **Python 3** instalado en el sistema.
 2.  Una base de datos activa con chats guardados en `C:\Users\Atencion online 2\Desktop\auto_wpp\database\whatsapp.sqlite`.
 3.  Una clave de API de **Google Gemini** o compatible (MiniMax, OpenAI).
+4.  Dependencia adicional para taxonomía: `pip install pyyaml`. Si no está instalada, `buscar_datos.py --classify` sigue funcionando pero usa la taxonomía hardcodeada de respaldo y emite un aviso por stderr.
 
 ---
 
