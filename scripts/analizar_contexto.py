@@ -242,6 +242,134 @@ def compute_metrics(cursor, contacts):
     return metrics
 
 
+def procesar_chats_con_ia(sample_list, db_path, options):
+    """Shared per-contact LLM processing loop consumed by both --with-metrics and interactive paths.
+
+    Args:
+        sample_list: list of (phone, name) tuples (or 3-tuples with _slot=None for --with-metrics).
+        db_path: Path to the SQLite database.
+        options: dict with keys:
+            - cursor: sqlite3.Cursor
+            - connection: sqlite3.Connection
+            - metrics_enabled: bool — when True, accumulate tokens and call registrar_logs at batch end
+            - fail_fast: bool — forwarded to llamar_api(); True for --with-metrics, False for interactive
+            - interactive: bool — when True, show progress bar and [WARN] lines
+            - registrar_logs: callable|None — called at batch end when metrics_enabled and nuevos_analizados > 0
+
+    Returns:
+        tuple: (summaries_dict, token_totals_dict, cache_stats_dict)
+            - summaries_dict: {phone: str|None} — cleaned summary or None
+            - token_totals_dict: {"prompt_tokens": int, "candidate_tokens": int, "total_tokens": int, "elapsed_seconds": float}
+            - cache_stats_dict: {"nuevos_analizados": int, "omitidos_por_cache": int}
+    """
+    summaries = {}
+    token_totals = {"prompt_tokens": 0, "candidate_tokens": 0, "total_tokens": 0, "elapsed_seconds": 0.0}
+    cache_stats = {"nuevos_analizados": 0, "omitidos_por_cache": 0}
+    nuevos_analizados = 0
+    omitidos_por_cache = 0
+    lote_prompt_tokens = 0
+    lote_candidate_tokens = 0
+    lote_total_tokens = 0
+    batch_start = time.time()
+
+    cursor = options["cursor"]
+    connection = options["connection"]
+    metrics_enabled = options.get("metrics_enabled", False)
+    fail_fast = options.get("fail_fast", False)
+    interactive = options.get("interactive", False)
+    registrar_logs = options.get("registrar_logs")
+
+    for idx, item in enumerate(sample_list):
+        # Support both 2-tuple (phone, name) and 3-tuple (phone, name, _slot)
+        if len(item) == 3:
+            phone, name, _slot = item
+        else:
+            phone, name = item
+            _slot = None
+
+        contact_label = name if name else f"Contacto {phone[-4:]}"
+
+        # Cache check: skip API call if profile already exists
+        cursor.execute(
+            "SELECT summary FROM conversation_summaries WHERE contact_phone = ? AND period = 'profile'",
+            (phone,),
+        )
+        row = cursor.fetchone()
+        if row:
+            summaries[phone] = row[0]
+            omitidos_por_cache += 1
+            cache_stats["omitidos_por_cache"] = omitidos_por_cache
+            if interactive:
+                mostrar_progreso(
+                    idx + 1, len(sample_list),
+                    prefijo="Progreso General",
+                    sufijo=f"({idx+1}/{len(sample_list)}) Analizando: {contact_label[:15]}",
+                    longitud=30,
+                )
+            continue
+
+        muestra = extraer_muestra_contacto(db_path, phone, name)
+        if not muestra:
+            summaries[phone] = None
+            if interactive:
+                print(f"\n[WARN] No se pudo analizar el contacto {contact_label}.")
+            continue
+
+        resultado, p_tok, c_tok, t_tok, t_api = llamar_api(muestra, is_individual=True, fail_fast=fail_fast)
+
+        if resultado:
+            perfil_limpio = remove_think_tags(resultado)
+            summaries[phone] = perfil_limpio
+            cursor.execute("""
+                INSERT OR REPLACE INTO conversation_summaries
+                    (contact_phone, period, summary, updated_at)
+                VALUES (?, 'profile', ?, CURRENT_TIMESTAMP)
+            """, (phone, perfil_limpio))
+            connection.commit()
+
+            # Always accumulate tokens for the caller (interactive needs them for final summary)
+            lote_prompt_tokens += p_tok
+            lote_candidate_tokens += c_tok
+            lote_total_tokens += t_tok
+
+            nuevos_analizados += 1
+            cache_stats["nuevos_analizados"] = nuevos_analizados
+
+            if interactive:
+                mostrar_progreso(
+                    idx + 1, len(sample_list),
+                    prefijo="Progreso General",
+                    sufijo=f"({idx+1}/{len(sample_list)}) Analizando: {contact_label[:15]}",
+                    longitud=30,
+                )
+                time.sleep(0.5)
+        else:
+            summaries[phone] = None
+            if interactive:
+                print(f"\n[WARN] No se pudo analizar el contacto {contact_label}.")
+
+    # Token accumulation totals
+    token_totals["prompt_tokens"] = lote_prompt_tokens
+    token_totals["candidate_tokens"] = lote_candidate_tokens
+    token_totals["total_tokens"] = lote_total_tokens
+
+    # End-of-batch: log token totals if metrics enabled
+    if metrics_enabled and registrar_logs and nuevos_analizados > 0:
+        batch_elapsed = time.time() - batch_start
+        registrar_logs(
+            1,                              # lote_num
+            db_path.parent.parent.name,     # db_name
+            nuevos_analizados,
+            omitidos_por_cache,
+            lote_prompt_tokens,
+            lote_candidate_tokens,
+            lote_total_tokens,
+            batch_elapsed,
+        )
+
+    return summaries, token_totals, cache_stats
+
+
 def dual_output_writer(sample, metrics, summaries, db_name, ts, output_dir, stratification=None, total_dataset_size=None):
     """Write dual output: contexto_{ts}.json + contexto_{ts}.md with YAML front-matter.
 
@@ -371,18 +499,18 @@ def remove_think_tags(text):
     cleaned = re.sub(r'<think>.*', '', cleaned, flags=re.DOTALL | re.IGNORECASE)
     return cleaned.strip()
 
+
 def seleccionar_base_datos(db_name=None):
     rutas_validas = []
-    try:
-        # Escanear dinámicamente el escritorio (directorio padre de wpp_analytics)
-        for folder in base_dir.parent.iterdir():
+    # Escanear dinámicamente el escritorio (directorio padre de wpp_analytics)
+    for folder in base_dir.parent.iterdir():
+        try:
             if folder.is_dir() and folder.name != 'wpp_analytics':
                 db_file = folder / 'database' / 'whatsapp.sqlite'
                 if db_file.exists():
                     rutas_validas.append((folder.name, db_file))
-    except Exception as e:
-        print(f"[ERROR] No se pudo escanear el Escritorio en busca de bases de datos: {str(e)}")
-        return None
+        except PermissionError:
+            continue   # skip inaccessible folder, keep scanning siblings
 
     if not rutas_validas:
         print("[ERROR] No se encontró ninguna base de datos de WhatsApp en el Escritorio.")
@@ -515,7 +643,7 @@ def registrar_logs_v2(lote_num, db_name, analizados, de_cache, prompt_tokens, ca
     except Exception as e:
         print(f"[ERROR] No se pudo escribir en logs.txt: {str(e)}")
 
-def llamar_api(prompt, current_report=None, is_individual=False):
+def llamar_api(prompt, current_report=None, is_individual=False, fail_fast: bool = False):
     if not api_key:
         print("\n[ERROR] No se ha configurado ninguna clave de API.")
         print("Crea un archivo '.env' en esta carpeta con la clave de API correspondiente.")
@@ -632,10 +760,12 @@ def llamar_api(prompt, current_report=None, is_individual=False):
                 return text_output, prompt_tokens, candidate_tokens, total_tokens, elapsed_time
             
     except urllib.error.HTTPError as e:
+        if fail_fast and e.code in (401, 403):
+            sys.exit(f"[FATAL] Credenciales rechazadas (HTTP {e.code}). Abortando.")
         print(f"\n[ERROR] Error HTTP de la API: {e.code} - {e.reason}")
         try:
             print("Detalles del error:", e.read().decode('utf-8'))
-        except:
+        except Exception:
             pass
         return None, 0, 0, 0, 0
     except Exception as e:
@@ -672,7 +802,7 @@ def compilar_reporte_local(db_path):
             "---",
             ""
         ]
-        
+
         for idx, (phone, name, summary) in enumerate(rows):
             contact_label = f"{name} ({phone})" if name != 'Desconocido' else f"Contacto {phone}"
             report_lines.append(f"### #{idx+1} - {contact_label}")
@@ -766,39 +896,25 @@ def main():
         # 5. Metrics pass (Q1+Q2)
         metrics = compute_metrics(cursor, sample_phones)
 
-        # 6. LLM loop over sampled contacts (same logic as existing batch loop)
+        # 6. LLM loop over sampled contacts via shared function
         sample_with_names = [(p, phone_to_name.get(p, ""), None) for p in sample_phones]
-        summaries = {}
-
-        for idx, (phone, name, _slot) in enumerate(sample_with_names):
-            muestra = extraer_muestra_contacto(db_path, phone, name)
-            if not muestra:
-                summaries[phone] = None
-                continue
-            contact_label = name if name else f"Contacto {phone[-4:]}"
-            resultado, p_tok, c_tok, t_tok, t_api = llamar_api(muestra, is_individual=True)
-            if resultado:
-                perfil_limpio = remove_think_tags(resultado)
-                summaries[phone] = perfil_limpio
-                # Write to SQLite cache (same as existing code)
-                cursor.execute("""
-                    INSERT OR REPLACE INTO conversation_summaries
-                        (contact_phone, period, summary, updated_at)
-                    VALUES (?, 'profile', ?, CURRENT_TIMESTAMP)
-                """, (phone, perfil_limpio))
-                conn.commit()
-                time.sleep(0.5)
-            else:
-                summaries[phone] = None
-            mostrar_progreso(idx + 1, len(sample_phones),
-                             prefijo="Procesando muestra estratificada",
-                             sufijo=f"({idx+1}/{len(sample_phones)})",
-                             longitud=30)
+        summaries, _token_totals, _cache_stats = procesar_chats_con_ia(
+            sample_with_names,
+            db_path,
+            options={
+                "cursor": cursor,
+                "connection": conn,
+                "metrics_enabled": True,
+                "fail_fast": True,
+                "interactive": False,
+                "registrar_logs": registrar_logs_v2,
+            },
+        )
 
         print()
-        conn.close()
 
-        # 7. Dual output
+        # 7. Dual output (phase-4a: master context synthesis added in phase-4b)
+        conn.close()
         ts = time.localtime()
 
         # Build flat stratification map (phone -> tier name) for the JSON payload
@@ -889,67 +1005,37 @@ def main():
         chats_procesados = len(contacts_batch)
         
         print(f"\n--- Procesando Lote #{lote_num} ({chats_procesados} chats, del {offset+1} al {limite_lote}) ---")
-        
-        lote_prompt_tokens = 0
-        lote_candidate_tokens = 0
-        lote_total_tokens = 0
+
         lote_start_time = time.time()
-        nuevos_analizados = 0
-        omitidos_por_cache = 0
-        
+
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-        
-        for idx, (phone, name) in enumerate(contacts_batch):
-            contact_label = name if name else f"Contacto {phone[-4:]}"
-            global_idx = offset + idx + 1
-            
-            # Mostrar la barra de carga visual
-            sufijo_barra = f"({global_idx}/{total_contactos}) Analizando: {contact_label[:15]}"
-            mostrar_progreso(global_idx, total_contactos, prefijo='Progreso General', sufijo=sufijo_barra, longitud=30)
-            
-            # Verificar si ya existe en la base de datos
-            cursor.execute("SELECT summary FROM conversation_summaries WHERE contact_phone = ? AND period = 'profile'", (phone,))
-            row = cursor.fetchone()
-            
-            if row:
-                omitidos_por_cache += 1
-                total_usados_cache += 1
-                continue
-                
-            # Si no existe, extraer sus mensajes y llamar a la API
-            muestra = extraer_muestra_contacto(db_path, phone, name)
-            if not muestra:
-                continue
-                
-            resultado, p_tok, c_tok, t_tok, t_api = llamar_api(muestra, is_individual=True)
-            
-            if resultado:
-                lote_prompt_tokens += p_tok
-                lote_candidate_tokens += c_tok
-                lote_total_tokens += t_tok
-                
-                global_prompt_tokens += p_tok
-                global_candidate_tokens += c_tok
-                global_total_tokens += t_tok
-                
-                nuevos_analizados += 1
-                total_nuevos_analizados += 1
-                
-                # Guardar el perfil limpio en SQLite
-                perfil_limpio = remove_think_tags(resultado)
-                cursor.execute("""
-                    INSERT OR REPLACE INTO conversation_summaries (contact_phone, period, summary, updated_at)
-                    VALUES (?, 'profile', ?, CURRENT_TIMESTAMP)
-                """, (phone, perfil_limpio))
-                conn.commit()
-                
-                # Pequeño retardo entre llamadas a la API para evitar rate limit
-                time.sleep(0.5)
-            else:
-                # Si falla o da error, imprimir nueva línea para no romper la barra
-                print(f"\n[WARN] No se pudo analizar el contacto {contact_label}.")
-        
+
+        _summaries_batch, _token_totals, _cache_stats = procesar_chats_con_ia(
+            contacts_batch,
+            db_path,
+            options={
+                "cursor": cursor,
+                "connection": conn,
+                "metrics_enabled": False,
+                "fail_fast": False,
+                "interactive": True,
+                "registrar_logs": None,
+            },
+        )
+
+        # CRITICAL-1 fix: project per-batch cache stats into run-level globals
+        total_usados_cache     += _cache_stats["omitidos_por_cache"]
+        total_nuevos_analizados += _cache_stats["nuevos_analizados"]
+        global_prompt_tokens += _token_totals["prompt_tokens"]
+        global_candidate_tokens += _token_totals["candidate_tokens"]
+        global_total_tokens += _token_totals["total_tokens"]
+        nuevos_analizados       = _cache_stats["nuevos_analizados"]
+        omitidos_por_cache      = _cache_stats["omitidos_por_cache"]
+        lote_prompt_tokens      = _token_totals["prompt_tokens"]
+        lote_candidate_tokens   = _token_totals["candidate_tokens"]
+        lote_total_tokens       = _token_totals["total_tokens"]
+
         conn.close()
         
         # Compilar el reporte completo leyendo TODOS los perfiles de la BD local
