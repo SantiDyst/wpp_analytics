@@ -1,0 +1,20 @@
+[2026-06-29 23:01:42] [LOTE 1] DB=auto_wpp2 | Chats Procesados=50 | Tokens Entrada=10163 | Tokens Salida=4096 | Total Tokens=14259 | Tiempo API=130.51s | Palabras Generadas=2358
+[2026-06-29 23:04:17] [LOTE 2] DB=auto_wpp2 | Chats Procesados=50 | Tokens Entrada=7518 | Tokens Salida=4096 | Total Tokens=11614 | Tiempo API=111.55s | Palabras Generadas=2192
+[2026-06-29 23:05:35] [LOTE 3] DB=auto_wpp2 | Chats Procesados=50 | Tokens Entrada=9448 | Tokens Salida=4096 | Total Tokens=13544 | Tiempo API=38.20s | Palabras Generadas=2476
+[2026-06-29 23:13:02] [LOTE 4] DB=auto_wpp2 | Chats Procesados=50 | Tokens Entrada=7188 | Tokens Salida=3424 | Total Tokens=10612 | Tiempo API=114.19s | Palabras Generadas=1843
+[2026-06-29 23:20:13] [LOTE 5] DB=auto_wpp2 | Chats Procesados=50 | Tokens Entrada=8370 | Tokens Salida=4096 | Total Tokens=12466 | Tiempo API=91.41s | Palabras Generadas=2158
+[2026-06-29 23:25:27] [LOTE 6] DB=auto_wpp2 | Chats Procesados=50 | Tokens Entrada=7091 | Tokens Salida=4096 | Total Tokens=11187 | Tiempo API=47.54s | Palabras Generadas=2313
+[2026-06-29 23:39:10] [LOTE 7] DB=auto_wpp2 | Chats Procesados=50 | Tokens Entrada=6969 | Tokens Salida=4096 | Total Tokens=11065 | Tiempo API=36.48s | Palabras Generadas=2521
+[2026-06-29 23:40:51] [LOTE 8] DB=auto_wpp2 | Chats Procesados=50 | Tokens Entrada=9487 | Tokens Salida=4096 | Total Tokens=13583 | Tiempo API=78.14s | Palabras Generadas=2431
+[2026-06-29 23:43:04] [LOTE 9] DB=auto_wpp2 | Chats Procesados=50 | Tokens Entrada=6768 | Tokens Salida=4096 | Total Tokens=10864 | Tiempo API=47.50s | Palabras Generadas=2287
+[2026-06-29 23:46:18] [LOTE 10] DB=auto_wpp2 | Chats Procesados=27 | Tokens Entrada=5822 | Tokens Salida=4096 | Total Tokens=9918 | Tiempo API=67.80s | Palabras Generadas=2429
+[2026-06-30 00:29:37] [LOTE 1] DB=auto_wpp2 | Analizados=44 | Caché=0 | Tokens Entrada=29419 | Tokens Salida=33531 | Total Tokens=62950 | Tiempo Lote=836.77s
+[2026-06-30 00:43:00] [LOTE 2] DB=auto_wpp2 | Analizados=47 | Caché=0 | Tokens Entrada=23958 | Tokens Salida=34643 | Total Tokens=58601 | Tiempo Lote=802.97s
+[2026-06-30 00:54:32] [LOTE 3] DB=auto_wpp2 | Analizados=43 | Caché=0 | Tokens Entrada=20515 | Tokens Salida=28117 | Total Tokens=48632 | Tiempo Lote=692.06s
+[2026-06-30 01:06:09] [LOTE 4] DB=auto_wpp2 | Analizados=41 | Caché=0 | Tokens Entrada=20420 | Tokens Salida=27744 | Total Tokens=48164 | Tiempo Lote=697.06s
+[2026-06-30 01:15:32] [LOTE 5] DB=auto_wpp2 | Analizados=42 | Caché=0 | Tokens Entrada=21920 | Tokens Salida=28410 | Total Tokens=50330 | Tiempo Lote=563.07s
+[2026-06-30 01:25:27] [LOTE 6] DB=auto_wpp2 | Analizados=41 | Caché=0 | Tokens Entrada=19871 | Tokens Salida=26569 | Total Tokens=46440 | Tiempo Lote=594.99s
+[2026-06-30 01:35:40] [LOTE 7] DB=auto_wpp2 | Analizados=42 | Caché=0 | Tokens Entrada=20498 | Tokens Salida=30222 | Total Tokens=50720 | Tiempo Lote=612.63s
+[2026-06-30 01:46:27] [LOTE 8] DB=auto_wpp2 | Analizados=45 | Caché=0 | Tokens Entrada=28110 | Tokens Salida=34986 | Total Tokens=63096 | Tiempo Lote=647.46s
+[2026-06-30 01:56:49] [LOTE 9] DB=auto_wpp2 | Analizados=42 | Caché=0 | Tokens Entrada=22189 | Tokens Salida=29753 | Total Tokens=51942 | Tiempo Lote=621.22s
+[2026-06-30 02:02:09] [LOTE 10] DB=auto_wpp2 | Analizados=24 | Caché=0 | Tokens Entrada=14652 | Tokens Salida=16897 | Total Tokens=31549 | Tiempo Lote=320.74s

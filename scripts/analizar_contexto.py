@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 import sqlite3
 import json
 import argparse
@@ -27,7 +28,6 @@ base_dir = Path(__file__).parent.parent
 env_path = base_dir / '.env'
 output_dir = base_dir / 'outputs'
 output_dir.mkdir(exist_ok=True)
-report_path = output_dir / 'reporte_contexto_v2.md'
 log_file_path = output_dir / 'logs.txt'
 
 # Cargar API Key, Modelo y Base URL desde archivo .env si existe
@@ -266,6 +266,11 @@ def procesar_chats_con_ia(sample_list, db_path, options):
             - summaries_dict: {phone: str|None} — cleaned summary or None
             - token_totals_dict: {"prompt_tokens": int, "candidate_tokens": int, "total_tokens": int, "elapsed_seconds": float}
             - cache_stats_dict: {"nuevos_analizados": int, "omitidos_por_cache": int}
+
+    TODO Phase-3: evaluate concurrent.futures.ThreadPoolExecutor for parallel
+    LLM calls. Sequential design adds ~0.5s sleep + ~2-3s API latency per contact
+    (~4-5 min for 90 contacts). Concurrency would cut this proportionally, but
+    rate limits on the MiniMax/Gemini providers must be validated first.
     """
     summaries = {}
     token_totals = {"prompt_tokens": 0, "candidate_tokens": 0, "total_tokens": 0, "elapsed_seconds": 0.0}
@@ -304,22 +309,27 @@ def procesar_chats_con_ia(sample_list, db_path, options):
             summaries[phone] = row[0]
             omitidos_por_cache += 1
             cache_stats["omitidos_por_cache"] = omitidos_por_cache
-            if interactive:
-                mostrar_progreso(
-                    idx + 1, len(sample_list),
-                    prefijo="Progreso General",
-                    sufijo=f"({idx+1}/{len(sample_list)}) Analizando: {contact_label[:15]}",
-                    longitud=30,
-                )
+            mostrar_progreso(
+                idx + 1, len(sample_list),
+                prefijo="Progreso",
+                sufijo=f"({idx+1}/{len(sample_list)}) Cache: {contact_label[:15]}",
+                longitud=30,
+            )
             continue
 
-        muestra = extraer_muestra_contacto(db_path, phone, name)
+        muestra = extraer_muestra_contacto(cursor, phone, name)
         if not muestra:
             summaries[phone] = None
-            if interactive:
-                print(f"\n[WARN] No se pudo analizar el contacto {contact_label}.")
+            print(f"\n[WARN] No se pudo analizar el contacto {contact_label} (sin mensajes válidos).")
+            mostrar_progreso(
+                idx + 1, len(sample_list),
+                prefijo="Progreso",
+                sufijo=f"({idx+1}/{len(sample_list)}) Skip: {contact_label[:15]}",
+                longitud=30,
+            )
             continue
 
+        print(f"\n[LLM] {idx+1}/{len(sample_list)} Analizando: {contact_label}...", flush=True)
         resultado, p_tok, c_tok, t_tok, t_api = llamar_api(muestra, is_individual=True, fail_fast=fail_fast)
 
         if resultado:
@@ -340,18 +350,22 @@ def procesar_chats_con_ia(sample_list, db_path, options):
             nuevos_analizados += 1
             cache_stats["nuevos_analizados"] = nuevos_analizados
 
-            if interactive:
-                mostrar_progreso(
-                    idx + 1, len(sample_list),
-                    prefijo="Progreso General",
-                    sufijo=f"({idx+1}/{len(sample_list)}) Analizando: {contact_label[:15]}",
-                    longitud=30,
-                )
-                time.sleep(0.5)
+            mostrar_progreso(
+                idx + 1, len(sample_list),
+                prefijo="Progreso",
+                sufijo=f"({idx+1}/{len(sample_list)}) OK: {contact_label[:15]}",
+                longitud=30,
+            )
+            time.sleep(0.5)
         else:
             summaries[phone] = None
-            if interactive:
-                print(f"\n[WARN] No se pudo analizar el contacto {contact_label}.")
+            print(f"\n[WARN] No se pudo analizar el contacto {contact_label} (API falló).")
+            mostrar_progreso(
+                idx + 1, len(sample_list),
+                prefijo="Progreso",
+                sufijo=f"({idx+1}/{len(sample_list)}) FAIL: {contact_label[:15]}",
+                longitud=30,
+            )
 
     # Token accumulation totals
     token_totals["prompt_tokens"] = lote_prompt_tokens
@@ -375,7 +389,72 @@ def procesar_chats_con_ia(sample_list, db_path, options):
     return summaries, token_totals, cache_stats
 
 
-def dual_output_writer(sample, metrics, summaries, db_name, ts, output_dir, stratification=None, total_dataset_size=None, master_context: dict | None = None):
+def escribir_reporte_ejecutivo(
+    master_sections: dict[str, str],
+    db_name: str,
+    sample_size: int,
+    ts: time.struct_time,
+    labels_distribution: dict[str, int],
+    output_dir: Path,
+) -> Path:
+    """Write contexto_{ts}.md: YAML front-matter + 4 executive sections.
+
+    Returns the output Path. Does not raise on missing section — emits a
+    placeholder line for each missing key.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"contexto_{time.strftime('%Y%m%d_%H%M%S', ts)}"
+    md_path = output_dir / f"{stem}.md"
+
+    date_str = time.strftime("%Y-%m-%d", ts)
+    contexto = master_sections.get("contexto_general", "")
+
+    front_matter = [
+        "---",
+        f"date: {date_str}",
+        "title: Reporte Ejecutivo de Análisis de Contexto",
+        f"db_name: {db_name}",
+        f"sample_size: {sample_size}",
+        "tier_method: quantile (P33/P66 inclusive)",
+        "master_context:",
+        f"  generated_at: {time.strftime('%Y-%m-%dT%H:%M:%S', ts)}",
+        f"  database: {db_name}",
+        f"  sample_size: {sample_size}",
+        "  labels_distribution:",
+    ]
+    for label, count in labels_distribution.items():
+        front_matter.append(f"    {label}: {count}")
+    front_matter.append("  summary: |")
+    for line in contexto.splitlines() or ["(sección no generada)"]:
+        front_matter.append(f"    {line}")
+    front_matter.append("---")
+    front_matter.append("")
+
+    body = [
+        "## 1. Contexto General del Entorno",
+        "",
+        master_sections.get("contexto_general", "*No disponible.*"),
+        "",
+        "## 2. Temáticas o Categorías Más Comunes",
+        "",
+        master_sections.get("tematicas", "*No disponible.*"),
+        "",
+        "## 3. Dudas o Consultas Frecuentes",
+        "",
+        master_sections.get("dudas", "*No disponible.*"),
+        "",
+        "## 4. Propuesta de Taxonomía",
+        "",
+        master_sections.get("propuesta_taxonomia", "*No disponible.*"),
+        "",
+    ]
+
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(front_matter + body))
+    return md_path
+
+
+def dual_output_writer(sample, metrics, summaries, db_name, ts, output_dir, stratification=None, total_dataset_size=None, master_sections: dict[str, str] | None = None, master_context: dict | None = None):
     """Write dual output: contexto_{ts}.json + contexto_{ts}.md with YAML front-matter.
 
     stratification: optional dict mapping phone -> tier name ("low" | "mid" | "high").
@@ -383,6 +462,13 @@ def dual_output_writer(sample, metrics, summaries, db_name, ts, output_dir, stra
     total_dataset_size: optional int with the full dataset size (denominator for the
         30% sampling ratio). When None, defaults to len(sample) which is non-ideal but
         keeps backward compat.
+    master_sections: optional 4-key dict with keys ``contexto_general``, ``tematicas``,
+        ``dudas``, ``propuesta_taxonomia``. When provided, the MD is written via
+        ``escribir_reporte_ejecutivo`` (4-section executive report). When None,
+        falls back to the legacy YAML-front-matter-only format for backward compat.
+    master_context: optional dict with keys ``summary``, ``generated_at``,
+        ``labels_distribution``. For backward compat only; ``master_sections`` is
+        preferred and takes precedence for the JSON ``master_context.sections`` field.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = f"contexto_{time.strftime('%Y%m%d_%H%M%S', ts)}"
@@ -391,7 +477,13 @@ def dual_output_writer(sample, metrics, summaries, db_name, ts, output_dir, stra
 
     # Build contacts list — same data in both formats
     contacts_out = []
-    for idx, (phone, name, summary_text) in enumerate(sample):
+    for idx, item in enumerate(sample):
+        # Support both 3-tuple (phone, name, summary_text) and 4-tuple (..., conversation_snippet)
+        if len(item) >= 4:
+            phone, name, summary_text, conv_snippet = item[0], item[1], item[2], item[3]
+        else:
+            phone, name, summary_text = item[0], item[1], item[2]
+            conv_snippet = None
         m = metrics.get(phone, {
             "total_messages": 0,
             "multimedia_pct": 0.0,
@@ -407,16 +499,18 @@ def dual_output_writer(sample, metrics, summaries, db_name, ts, output_dir, stra
             "contact_label": contact_label,
             "metrics": m,
             "profile_summary": summary_text or "",
+            "conversation_snippet": conv_snippet if conv_snippet else "",
         })
 
     # Build stratification dict from sample using provided stratification map
     stratification_out = {}
-    if stratification:
-        for phone, _, _ in sample:
-            stratification_out[phone] = stratification.get(phone, "unknown")
-    else:
-        for phone, _, _ in sample:
-            stratification_out[phone] = "unknown"
+    for phone, *_ in sample:
+        stratification_out[phone] = stratification.get(phone, "unknown") if stratification else "unknown"
+
+    # Build master_context for JSON — include sections dict when available
+    mc_for_json = dict(master_context) if master_context else {}
+    if master_sections:
+        mc_for_json["sections"] = master_sections
 
     # JSON
     payload = {
@@ -425,13 +519,14 @@ def dual_output_writer(sample, metrics, summaries, db_name, ts, output_dir, stra
         "total_contacts": total_dataset_size if total_dataset_size is not None else len(sample),
         "sampled_contacts": len(sample),
         "stratification": stratification_out,
-        "master_context": master_context,
+        "master_context": mc_for_json if mc_for_json else None,
         "contacts": [
             {
                 "phone": c["phone"],
                 "name": c["name"],
                 "metrics": c["metrics"],
                 "profile_summary": c["profile_summary"],
+                "conversation_snippet": c.get("conversation_snippet", ""),
             }
             for c in contacts_out
         ],
@@ -439,84 +534,48 @@ def dual_output_writer(sample, metrics, summaries, db_name, ts, output_dir, stra
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
-    # Markdown with YAML front-matter
-    date_str = time.strftime("%Y-%m-%d", ts)
-    yaml_header = [
-        "---",
-        f"date: {date_str}",
-        f"title: Reporte de Analisis de Contexto",
-        f"db_name: {db_name}",
-        f"sample_size: {len(sample)}",
-        "tier_method: quantile (P33/P66 inclusive)",
-    ]
-    if master_context:
-        mc = master_context
-        labels_dist = mc.get("labels_distribution", {})
-        labels_yaml = "\n    ".join(f"{k}: {v}" for k, v in labels_dist.items())
-        yaml_header.append(
-            "master_context:"
+    # MD: use executive report when master_sections available, else legacy YAML-only
+    if master_sections:
+        labels_dist = (master_context or {}).get("labels_distribution", {})
+        escribir_reporte_ejecutivo(
+            master_sections=master_sections,
+            db_name=db_name,
+            sample_size=len(sample),
+            ts=ts,
+            labels_distribution=labels_dist,
+            output_dir=output_dir,
         )
-        yaml_header.append(
-            f"  generated_at: {mc.get('generated_at', '')}"
-        )
-        yaml_header.append(
-            f"  database: {db_name}"
-        )
-        yaml_header.append(
-            f"  sample_size: {len(sample)}"
-        )
-        yaml_header.append(
-            "  labels_distribution:"
-        )
-        if labels_dist:
-            for k, v in labels_dist.items():
-                yaml_header.append(f"    {k}: {v}")
-        else:
-            yaml_header.append("    {}")
-        # summary block: use | for multiline literal scalar
-        summary_text = mc.get("summary", "") or ""
-        yaml_header.append("  summary: |")
-        for line in summary_text.splitlines():
-            yaml_header.append(f"    {line}")
-    yaml_header.append("---")
-    yaml_header.append("")
-    yaml_header.append(f"## Muestra Estratificada — {len(sample)} contactos")
-    yaml_header.append("")
-    yaml_header.append("Este reporte fue generado automaticamente con muestreo estratificado por volumen de mensajes.")
-    yaml_header.append("")
-    md_lines = yaml_header
-    for idx, (phone, name, summary_text) in enumerate(sample):
-        m = metrics.get(phone, {
-            "total_messages": 0,
-            "multimedia_pct": 0.0,
-            "from_me_pct": 0.0,
-            "first_message": None,
-            "last_message": None,
-            "media_types": [],
-        })
-        contact_label = name if name else f"Contacto {phone[-4:]}"
-        md_lines.append(f"### #{idx+1} - {contact_label} ({phone})")
-        md_lines.append("")
-        md_lines.append("| Métrica | Valor |")
-        md_lines.append("|---------|------|")
-        md_lines.append(f"| Mensajes totales | {m['total_messages']} |")
-        md_lines.append(f"| Mensajes multimedia (%%) | {m['multimedia_pct']} |")
-        md_lines.append(f"| Mensajes enviados por mí (%%) | {m['from_me_pct']} |")
-        md_lines.append(f"| Primer mensaje | {m['first_message'] or 'N/A'} |")
-        md_lines.append(f"| Último mensaje | {m['last_message'] or 'N/A'} |")
-        md_lines.append(f"| Tipos de medio | {', '.join(m['media_types']) or 'Ninguno'} |")
-        md_lines.append("")
-        if summary_text:
-            md_lines.append("**Perfil:**")
-            md_lines.append(summary_text.strip())
-        else:
-            md_lines.append("*Sin resumen disponible.*")
-        md_lines.append("")
-        md_lines.append("---")
-        md_lines.append("")
-
-    with open(md_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(md_lines))
+    else:
+        # Legacy YAML-only format (backward compat for callers still using master_context)
+        date_str = time.strftime("%Y-%m-%d", ts)
+        yaml_header = [
+            "---",
+            f"date: {date_str}",
+            f"title: Reporte de Analisis de Contexto",
+            f"db_name: {db_name}",
+            f"sample_size: {len(sample)}",
+            "tier_method: quantile (P33/P66 inclusive)",
+        ]
+        if master_context:
+            mc = master_context
+            labels_dist = mc.get("labels_distribution", {})
+            yaml_header.append("master_context:")
+            yaml_header.append(f"  generated_at: {mc.get('generated_at', '')}")
+            yaml_header.append(f"  database: {db_name}")
+            yaml_header.append(f"  sample_size: {len(sample)}")
+            yaml_header.append("  labels_distribution:")
+            if labels_dist:
+                for k, v in labels_dist.items():
+                    yaml_header.append(f"    {k}: {v}")
+            else:
+                yaml_header.append("    {}")
+            summary_text = mc.get("summary", "") or ""
+            yaml_header.append("  summary: |")
+            for line in summary_text.splitlines():
+                yaml_header.append(f"    {line}")
+        yaml_header.append("---")
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(yaml_header))
 
     return json_path, md_path
 
@@ -528,7 +587,6 @@ def mostrar_progreso(actual, total, prefijo='', sufijo='', longitud=30):
     print(f"\r{prefijo}: [{barra}] {porcentaje}% {sufijo}", end='', flush=True)
 
 def remove_think_tags(text):
-    import re
     if not text:
         return text
     cleaned = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL | re.IGNORECASE)
@@ -542,7 +600,6 @@ def parse_label(summary: str) -> str:
     Returns the matched label, or 'Otro' if no label is found.
     Format expected: '*   **Vínculo Comercial:** Cliente' or equivalent.
     """
-    import re
     match = re.search(r"V[ií]nculo Comercial[:*\s]+([A-Za-zÁÉÍÓÚáéíóú]+)", summary or "")
     if match:
         candidate = match.group(1).strip()
@@ -567,7 +624,6 @@ def extract_temas(summary: str) -> str | None:
       - Returns None if no matching line is found OR if the matched value is
         empty/whitespace (e.g. "Temas Clave:   ").
     """
-    import re
     for line in (summary or "").splitlines():
         if re.search(r"temas\s+clave", line, re.IGNORECASE):
             # Find the colon, strip any leading ** and whitespace from what follows.
@@ -577,13 +633,18 @@ def extract_temas(summary: str) -> str | None:
     return None
 
 
-def aggregate_for_master(summaries: dict) -> tuple[dict, str]:
-    """Group summaries by Vínculo Comercial label, sample up to 10 per label,
-    and build a compact input string for the master synthesis call.
+def aggregate_for_master(
+    summaries: dict,
+    cursor: sqlite3.Cursor,
+    phone_to_name: dict,
+) -> tuple[dict, str]:
+    """Build rich master-call input: per-label profile + raw chat snippet.
 
-    Returns (labels_distribution, master_input_string):
+    Returns (labels_distribution, master_input_string).
       - labels_distribution: {"Cliente": 20, "Proveedor": 15, ...}
-      - master_input_string: ≤ 60 lines, one block per non-empty label
+      - master_input_string: ≤ ~600 lines, 6 contacts sampled per label,
+        each contact gets its stored `Temas Clave` plus the last ~12
+        chat lines extracted from the open cursor.
     """
     grouped: dict[str, list[tuple[str, str]]] = defaultdict(list)
     for phone, summary in summaries.items():
@@ -594,30 +655,60 @@ def aggregate_for_master(summaries: dict) -> tuple[dict, str]:
 
     distribution = {label: len(items) for label, items in grouped.items()}
 
-    compact = []
+    blocks = []
     for label, items in sorted(grouped.items(), key=lambda kv: -len(kv[1])):
-        sample = random.sample(items, min(10, len(items)))
-        topic_lines = []
+        sample = random.sample(items, min(6, len(items)))
+        contact_lines = []
         for phone, summary in sample:
-            temas = extract_temas(summary)
-            if temas:
-                topic_lines.append(f"  - {phone}: {temas}")
+            temas = extract_temas(summary) or "(sin temas)"
+            # Re-extract from the live cursor; same helper used by the
+            # per-contact loop, so the snippet format is consistent.
+            muestra = extraer_muestra_contacto(cursor, phone, phone_to_name.get(phone, ""))
+            snippet_lines = (muestra or "").splitlines()[-12:]   # last 12 chat lines
+            snippet = " | ".join(snippet_lines)[:600]           # hard cap
+            contact_lines.append(
+                f"  - {phone}\n    Temas: {temas}\n    Snippet: {snippet}"
+            )
         header = f"=== {label} ({len(items)} contactos, muestreo {len(sample)}) ==="
-        compact.append(header + "\n" + "\n".join(topic_lines))
+        blocks.append(header + "\n" + "\n".join(contact_lines))
 
-    return distribution, "\n\n".join(compact)
+    return distribution, "\n\n".join(blocks)
 
 
 MASTER_SYNTHESIS_PROMPT = (
-    "Eres un analista de relaciones comerciales B2B. A continuación recibirás "
-    "una muestra de contactos agrupados por Vínculo Comercial y sus Temas Clave. "
-    "Genera un 'Contexto Maestro del Negocio' en prosa ejecutiva (máximo 350 palabras) "
-    "que incluya:\n"
-    "  1. Composición de la cartera de contactos por tipo de vínculo.\n"
-    "  2. Los 3-5 temas dominantes que articulan la operatoria comercial.\n"
-    "  3. Riesgos comerciales detectados (Spam, dependencias, desequilibrios).\n"
-    "  4. Una recomendación priorizada de 1-2 líneas de acción.\n\n"
-    "Muestra agregada:\n{master_input}"
+    "Eres un analista senior de inteligencia comercial B2B. Recibirás una "
+    "muestra estratificada de conversaciones reales de WhatsApp, agrupadas "
+    "por Vínculo Comercial. Cada contacto incluye Temas Clave (resumidos por "
+    "IA) y un fragmento crudo de su conversación.\n\n"
+    "Produce un Reporte Ejecutivo estructurado en EXACTAMENTE cuatro secciones, "
+    "cada una iniciando con su encabezado Markdown en una línea propia. "
+    "Respeta los encabezados al pie de la letra (sin renombrar):\n\n"
+    "## 1. Contexto General del Entorno\n"
+    "[2-3 párrafos: qué hace el negocio, cómo opera, canales principales, "
+    "volumen relativo por tipo de vínculo. Tono ejecutivo, sin relleno.]\n\n"
+    "## 2. Temáticas o Categorías Más Comunes\n"
+    "[Lista priorizada de 5-8 patrones transversales de conversación con "
+    "frecuencia relativa estimada. Cada ítem: '- <tema> (<N> contactos)' "
+    "seguido de una línea de evidencia del snippet.]\n\n"
+    "## 3. Dudas o Consultas Frecuentes\n"
+    "[Lista de 5-10 preguntas reales o implícitas que los usuarios hacen. "
+    "Esta sección es insumo directo para chatbots. Formato: '- ¿<pregunta>?' "
+    "seguido de una línea de contexto breve.]\n\n"
+    "## 4. Propuesta de Taxonomía\n"
+    "[Árbol jerárquico Markdown con guiones. Máximo 3 niveles de "
+    "profundidad. Cada categoría hoja debe tener 2-3 ejemplos reales "
+    "derivados de los snippets. Formato:\n"
+    "  - <Categoría nivel 1>\n"
+    "    - <Subcategoría nivel 2>\n"
+    "      - <Tema nivel 3>: ejemplo1, ejemplo2]\n\n"
+    "Restricciones:\n"
+    "- Idioma: español.\n"
+    "- Tono: ejecutivo, denso, sin disclaimers ni frases de cortesía.\n"
+    "- Longitud total: 500-800 palabras. Si te quedas corto, profundiza; "
+    "si te excedes, recorta las evidencias a una línea cada una.\n"
+    "- NO inventes datos. Cita solo lo respaldado por los snippets.\n"
+    "- NO incluyas secciones adicionales fuera de las cuatro.\n\n"
+    "Muestra de contactos:\n{master_input}"
 )
 
 
@@ -627,32 +718,75 @@ class MasterCallEmptyResponse(ValueError):
     pass
 
 
-def master_call_with_retry(master_input: str) -> str | None:
-    """Returns master text or None after exhausted retries.
+def _parse_master_sections(text: str) -> dict[str, str] | None:
+    """Parse the 4-section master response into a dict.
 
-    CRITICAL-2 fix: the previous draft only triggered a retry on `Exception`.
-    A successful HTTP 200 with an empty body returns normally but is not a
-    usable synthesis. We now treat empty/whitespace text as a failure and
-    route it through the same retry path that handles network/HTTP errors.
+    Splits on ``## 1.``, ``## 2.``, ``## 3.``, ``## 4.`` markers,
+    normalizes keys to ``contexto_general``, ``tematicas``, ``dudas``,
+    ``propuesta_taxonomia``, and returns the dict.
+
+    Returns None if any of the four markers is missing (degrades gracefully
+    so the caller can fall back to a fresh master call).
+    """
+    if not text:
+        return None
+
+    # Map section index to canonical key name
+    key_map = {
+        "1": "contexto_general",
+        "2": "tematicas",
+        "3": "dudas",
+        "4": "propuesta_taxonomia",
+    }
+
+    sections: dict[str, str] = {}
+    for idx, key in key_map.items():
+        marker = f"## {idx}."
+        if marker not in text:
+            return None  # malformed — degrade gracefully
+        _, _, after = text.partition(marker)
+        # Next marker (or end of string) terminates this section
+        next_markers = [f"## {n}." for n in key_map if n != idx]
+        earliest_next = float("inf")
+        for nm in next_markers:
+            pos = after.find(nm)
+            if pos != -1 and pos < earliest_next:
+                earliest_next = pos
+        content = after[:earliest_next] if earliest_next != float("inf") else after
+        sections[key] = content.strip()
+
+    return sections
+
+
+def master_call_with_retry(master_input: str) -> tuple[dict[str, str] | None, int, int, int]:
+    """Returns (master_sections_dict, prompt_tokens, candidate_tokens, total_tokens)
+    or (None, 0, 0, 0) after exhausted retries.
+
+    ``master_sections_dict`` has keys: ``contexto_general``, ``tematicas``,
+    ``dudas``, ``propuesta_taxonomia``.  Returns ``None`` when the API
+    returns an empty/whitespace body or the 4-section parse fails.
     """
     prompt = MASTER_SYNTHESIS_PROMPT.format(master_input=master_input)
+    prompt_tokens = candidate_tokens = total_tokens = 0
 
     for attempt in (1, 2):
         try:
-            text, *_ = llamar_api(prompt, is_individual=False, fail_fast=False)
+            text, prompt_tokens, candidate_tokens, total_tokens, _ = llamar_api(prompt, raw_prompt=True, fail_fast=False)
             if not text or not text.strip():
-                # CRITICAL-2: explicit empty-body detection. Without this,
-                # an HTTP 200 + empty JSON would pass as "success" and we'd
-                # persist a `__MAESTRO__` row with `summary=''`.
                 raise MasterCallEmptyResponse("Empty response from master call")
-            return remove_think_tags(text)
-        except (Exception, MasterCallEmptyResponse):
+            cleaned = remove_think_tags(text)
+            sections = _parse_master_sections(cleaned)
+            if sections is None:
+                # Malformed response — treat as failure and retry
+                raise ValueError("Missing section marker in master response")
+            return sections, prompt_tokens, candidate_tokens, total_tokens
+        except Exception:
             if attempt == 2:
                 print("[WARN] Master synthesis call failed after retry. "
                       "Individual results remain available.")
-                return None
+                return None, 0, 0, 0
             # else: fall through to the next iteration (the retry).
-    return None  # unreachable; the loop returns explicitly on attempt == 2
+    return None, 0, 0, 0  # unreachable
 
 
 def is_recent(updated_at: str, hours: int = 24) -> bool:
@@ -729,21 +863,23 @@ def seleccionar_base_datos(db_name=None):
 
 def obtener_todos_los_contactos(db_path):
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT phone, name FROM contacts")
-        contacts = cursor.fetchall()
-        conn.close()
-        return contacts
+        with sqlite3.connect(db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT phone, name FROM contacts")
+            return cursor.fetchall()
     except Exception as e:
         print(f"[ERROR] Error al leer los contactos de la base de datos: {str(e)}")
         return []
 
-def extraer_muestra_contacto(db_path, phone, name):
+def extraer_muestra_contacto(cursor, phone, name):
+    """Extract a per-contact chat sample using the caller's existing cursor.
+
+    Refactored from a self-contained connection-per-contact to a shared cursor
+    pattern: procesar_chats_con_ia already opens one connection per run, and
+    opening 90+ extra connections for a 90-contact sample is wasteful and risks
+    transient locks when writes happen concurrently elsewhere.
+    """
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
         contact_label = name if name else f"Contacto {phone[-4:]}"
         seen_messages = set()
         
@@ -754,9 +890,7 @@ def extraer_muestra_contacto(db_path, phone, name):
             ORDER BY timestamp ASC
         """, (phone,))
         messages = cursor.fetchall()
-        
-        conn.close()
-        
+
         if not messages:
             return None
             
@@ -823,16 +957,32 @@ def registrar_logs_v2(lote_num, db_name, analizados, de_cache, prompt_tokens, ca
     except Exception as e:
         print(f"[ERROR] No se pudo escribir en logs.txt: {str(e)}")
 
-def llamar_api(prompt, current_report=None, is_individual=False, fail_fast: bool = False):
+
+def registrar_logs_v3(db_name: str, prompt_tokens: int, candidate_tokens: int, total_tokens: int, tiempo_segundos: float):
+    """Log the master-call token accounting to logs.txt."""
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+    log_line = (
+        f"[{timestamp}] [MASTER] DB={db_name} | "
+        f"Tokens Entrada={prompt_tokens} | Tokens Salida={candidate_tokens} | "
+        f"Total Tokens={total_tokens} | Tiempo={tiempo_segundos:.2f}s\n"
+    )
+    try:
+        with open(log_file_path, 'a', encoding='utf-8') as f:
+            f.write(log_line)
+    except Exception as e:
+        print(f"[ERROR] No se pudo escribir en logs.txt: {str(e)}")
+
+
+def llamar_api(prompt, is_individual=False, fail_fast: bool = False, raw_prompt: bool = False):
     if not api_key:
         print("\n[ERROR] No se ha configurado ninguna clave de API.")
         print("Crea un archivo '.env' en esta carpeta con la clave de API correspondiente.")
         return None, 0, 0, 0, 0
-    
+
     # Determinar si es una clave compatible con OpenAI/Minimax (empieza con sk-)
     is_openai_compatible = api_key.startswith("sk-")
     active_model = model_name
-    
+
     # Si es compatible con OpenAI pero el modelo por defecto sigue siendo Gemini, usar MiniMax-M3 por defecto
     if is_openai_compatible:
         if not active_model or "gemini" in active_model.lower():
@@ -840,9 +990,13 @@ def llamar_api(prompt, current_report=None, is_individual=False, fail_fast: bool
     else:
         if not active_model or "gemini" not in active_model.lower():
             active_model = "gemini-2.5-flash"
-            
+
     # Construir instrucciones
-    if is_individual:
+    # raw_prompt=True: el prompt ya viene formateado externamente (e.g. MASTER_SYNTHESIS_PROMPT)
+    # is_individual=True: prompt es una conversación individual de WhatsApp
+    if raw_prompt:
+        instrucciones = prompt
+    elif is_individual:
         instrucciones = (
             "Analiza la siguiente conversación de WhatsApp entre 'Nosotros' (Usuario Principal) y un 'Cliente/Contacto' e identifica:\n"
             "1. Vínculo Comercial: Clasifica al contacto en uno de estos 6 valores: "
@@ -853,28 +1007,8 @@ def llamar_api(prompt, current_report=None, is_individual=False, fail_fast: bool
             "*   **Temas Clave:** [palabra1, palabra2, palabra3, palabra4, palabra5]\n\n"
             f"Conversación:\n{prompt}"
         )
-    elif current_report:
-        instrucciones = (
-            "Actualiza y consolida el reporte anterior de análisis relacional incorporando los nuevos chats. "
-            "Fusiona las temáticas comunes, refina las clasificaciones de los contactos y agrega los nuevos "
-            "contactos identificados con su respectivo perfil sin duplicar información. "
-            "Mantén la estructura y el formato minimalista con títulos ####.\n\n"
-            "### REPORTE ANTERIOR:\n"
-            f"{current_report}\n\n"
-            "### NUEVOS CHATS A INCORPORAR:\n"
-            f"{prompt}"
-        )
     else:
-        instrucciones = (
-            "Analiza el siguiente conjunto de conversaciones de WhatsApp de diversos contactos e identifica para cada uno:\n"
-            "1. Vínculo Comercial: Clasifica al contacto en uno de estos 6 valores: "
-            f"[{', '.join(LABELS)}].\n"
-            "2. Temas Clave: Hasta 5 palabras clave precisas que representen la interacción.\n\n"
-            "Devuelve la información estructurada por contacto usando títulos #### para cada sección, en este formato:\n"
-            "*   **Vínculo Comercial:** [uno de los 6 valores]\n"
-            "*   **Temas Clave:** [palabra1, palabra2, palabra3, palabra4, palabra5]\n\n"
-            f"Muestra de conversaciones:\n{prompt}"
-        )
+        raise ValueError("llamar_api: must specify is_individual=True or raw_prompt=True")
 
     start_time = time.time()
     try:
@@ -950,66 +1084,6 @@ def llamar_api(prompt, current_report=None, is_individual=False, fail_fast: bool
         print(f"\n[ERROR] Error de conexión o procesamiento: {str(e)}")
         return None, 0, 0, 0, 0
 
-def compilar_reporte_local(db_path, master_context: dict | None = None):
-    try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        
-        # Leer todos los perfiles guardados de la BD ordenados por actualización o nombre
-        cursor.execute("""
-            SELECT cs.contact_phone, COALESCE(c.name, 'Desconocido') as name, cs.summary 
-            FROM conversation_summaries cs
-            LEFT JOIN contacts c ON cs.contact_phone = c.phone
-            WHERE cs.period = 'profile'
-            ORDER BY cs.updated_at DESC
-        """)
-        rows = cursor.fetchall()
-        conn.close()
-        
-        report_lines = [
-            "---",
-            "date: " + time.strftime('%Y-%m-%d'),
-            "title: Reporte de Análisis Relacional y Perfiles de WhatsApp (V2)",
-        ]
-        if master_context:
-            mc = master_context
-            labels_dist = mc.get("labels_distribution", {})
-            report_lines.append("master_context:")
-            report_lines.append(f"  generated_at: {mc.get('generated_at', '')}")
-            summary_text = mc.get("summary", "") or ""
-            report_lines.append("  summary: |")
-            for line in summary_text.splitlines():
-                report_lines.append(f"    {line}")
-            if labels_dist:
-                report_lines.append("  labels_distribution:")
-                for k, v in labels_dist.items():
-                    report_lines.append(f"    {k}: {v}")
-        report_lines.extend([
-            "---",
-            "",
-            "#### REPORTE CONSOLIDADO DE CONTACTOS",
-            f"Total de contactos perfilados en este reporte: {len(rows)}",
-            "",
-            "Este reporte recopila la información de tus contactos analizados en la base de datos de forma individual mediante IA, detallando su vínculo comercial y los temas clave de cada interacción.",
-            "",
-            "---",
-            ""
-        ])
-
-        for idx, (phone, name, summary) in enumerate(rows):
-            contact_label = f"{name} ({phone})" if name != 'Desconocido' else f"Contacto {phone}"
-            report_lines.append(f"### #{idx+1} - {contact_label}")
-            report_lines.append(summary.strip())
-            report_lines.append("")
-            report_lines.append("---")
-            report_lines.append("")
-            
-        with open(report_path, 'w', encoding='utf-8') as f:
-            f.write("\n".join(report_lines))
-            
-    except Exception as e:
-        print(f"[ERROR] No se pudo compilar el reporte local: {str(e)}")
-
 def _extract_db_override(argv):
     """Pre-scan argv for `--db NAME` so both interactive and CLI paths honor it
     without parsing the full argparse surface. Returns NAME or None."""
@@ -1022,6 +1096,26 @@ def _extract_db_override(argv):
             return argv[i].split('=', 1)[1] or None
         i += 1
     return None
+
+
+def ensure_schema(cursor):
+    """Create conversation_summaries table if it doesn't exist.
+
+    Called from both the --with-metrics branch and the interactive branch,
+    immediately after opening the connection, so that INSERTs into
+    conversation_summaries never fail with `no such table` on a fresh DB.
+    """
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS conversation_summaries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            contact_phone TEXT NOT NULL,
+            period TEXT NOT NULL,
+            summary TEXT NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(contact_phone) REFERENCES contacts(phone),
+            UNIQUE(contact_phone, period)
+        )
+    """)
 
 
 def main():
@@ -1061,6 +1155,7 @@ def main():
         # 2. Build counts dict via Q1 aggregation
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
+        ensure_schema(cursor)
         cursor.execute("""
             SELECT contact_phone, COUNT(*) AS total_messages
             FROM messages
@@ -1084,7 +1179,9 @@ def main():
         # 4. Stratified sample
         sample_phones = stratified_sample(tiers, budget_ratio=args.sample_size)
         print(f"[INFO] Muestra estratificada: {len(sample_phones)} contactos "
-              f"({len(sample_phones)/len(todos_contactos)*100:.1f}%% del total)")
+              f"({len(sample_phones)/len(todos_contactos)*100:.1f}% del total)")
+        print(f"[INFO] Iniciando análisis LLM de {len(sample_phones)} contactos. "
+              f"Esto puede tardar varios minutos si hay chats válidos.")
 
         # 5. Metrics pass (Q1+Q2)
         metrics = compute_metrics(cursor, sample_phones)
@@ -1106,39 +1203,73 @@ def main():
 
         print()
 
-        # 7. Master Business Context — synthesis call (phase-4b)
-        master_text: str | None = None
+        # 7. Master Business Context — synthesis call (phase-5)
+        master_sections: dict[str, str] | None = None
         master_meta: dict = {}
+        master_start_time = time.time()
         if summaries:
-            # 7a. Resume check
+            # 7a. Resume check — attempt JSON deserialization first (phase-5 format),
+            # then fall back to fresh call for legacy phase-4b rows
             cursor.execute(
                 "SELECT summary, updated_at FROM conversation_summaries "
                 "WHERE contact_phone = '__MAESTRO__' AND period = 'master'"
             )
             cached = cursor.fetchone()
+            needs_fresh_call = True
             if cached and cached[1] and is_recent(cached[1], hours=24):
-                print(f"[INFO] Master context reutilizado de {cached[1]} (<24h).")
-                master_text = cached[0]
-            else:
+                saved_summary = cached[0] or ""
+                try:
+                    master_sections = json.loads(saved_summary)
+                    print(f"[INFO] Master context reutilizado de {cached[1]} (<24h).")
+                    needs_fresh_call = False
+                except json.JSONDecodeError:
+                    # Legacy phase-4b row — force fresh call (master_sections stays None,
+                    # will be replaced below)
+                    print(f"[INFO] Master context en formato legacy (<24h pero no JSON). "
+                          "Generando nuevo contexto maestro.")
+            if needs_fresh_call:
                 # 7b. Aggregate and synthesize
-                distribution, master_input = aggregate_for_master(summaries)
+                distribution, master_input = aggregate_for_master(summaries, cursor, phone_to_name)
                 if master_input:
-                    master_text = master_call_with_retry(master_input)
-                    if master_text:
+                    master_sections, pt, ct, tt = master_call_with_retry(master_input)
+                    master_elapsed = time.time() - master_start_time
+                    if master_sections:
+                        # Persist as JSON string (not raw text)
                         try:
+                            json_summary = json.dumps(master_sections, ensure_ascii=False)
                             cursor.execute("""
                                 INSERT OR REPLACE INTO conversation_summaries
                                     (contact_phone, period, summary, updated_at)
                                 VALUES ('__MAESTRO__', 'master', ?, CURRENT_TIMESTAMP)
-                            """, (master_text,))
+                            """, (json_summary,))
                             conn.commit()
                         except Exception as e:
                             print(f"[WARN] No se pudo persistir el contexto maestro en SQLite. "
                                   "La síntesis se mantiene en memoria para esta corrida.")
+                        # Log master-call token accounting
+                        registrar_logs_v3(db_name, pt, ct, tt, master_elapsed)
+                    else:
+                        # Master call failed — log failure
+                        registrar_logs_v3(db_name, 0, 0, 0, master_elapsed)
                 master_meta = {
                     "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "labels_distribution": distribution if master_text else {},
+                    "labels_distribution": distribution if master_sections else {},
                 }
+
+        # Build sample_for_output: (phone, name, summary_text, conversation_snippet)
+        # conversation_snippet is last ~200 chars of extracted conversation.
+        # Must happen BEFORE conn.close() since it uses the live cursor.
+        sample_for_output = []
+        for p in sample_phones:
+            name = phone_to_name.get(p, "")
+            summary_text = summaries.get(p)
+            muestra = extraer_muestra_contacto(cursor, p, name)
+            snippet = ""
+            if muestra:
+                snippet_lines = muestra.splitlines()[-12:]
+                snippet = " | ".join(snippet_lines)[-200:]
+            sample_for_output.append((p, name, summary_text, snippet))
+
         conn.close()
 
         # 8. Dual output
@@ -1150,27 +1281,30 @@ def main():
             for phone in phones:
                 stratification_map[phone] = tier_name
 
-        json_path, md_path = dual_output_writer(
-            sample_with_names, metrics, summaries, db_name, ts, args.output_dir,
+        # 8a. MD writer (replaces compilar_reporte_local)
+        escribir_reporte_ejecutivo(
+            master_sections=master_sections or {},
+            db_name=db_name,
+            sample_size=len(sample_phones),
+            ts=ts,
+            labels_distribution=master_meta.get("labels_distribution", {}),
+            output_dir=args.output_dir,
+        )
+
+        # 8b. JSON writer (unchanged signature, extended payload)
+        json_path, _md_path = dual_output_writer(
+            sample_for_output, metrics, summaries, db_name, ts, args.output_dir,
             stratification=stratification_map,
             total_dataset_size=len(todos_contactos),
+            master_sections=master_sections,
             master_context={
-                "text": master_text or "",
+                "summary": (master_sections or {}).get("contexto_general", ""),
                 "generated_at": master_meta.get("generated_at", ""),
                 "labels_distribution": master_meta.get("labels_distribution", {}),
             },
         )
         print(f"[INFO] Salida JSON: {json_path.name}")
-        print(f"[INFO] Salida MD:   {md_path.name}")
-        print(f"[INFO] Reporte legacy (reporte_contexto_v2.md) también actualizado.")
-        compilar_reporte_local(
-            db_path,
-            master_context={
-                "summary": master_text or "",
-                "generated_at": master_meta.get("generated_at", ""),
-                "labels_distribution": master_meta.get("labels_distribution", {}),
-            },
-        )
+        print(f"[INFO] Reporte ejecutivo: contexto_{time.strftime('%Y%m%d_%H%M%S', ts)}.md")
         print("[INFO] Proceso completado.")
         return
     # -----------------------------------------------------------------------
@@ -1202,21 +1336,11 @@ def main():
         else:
             print("[ERROR] Opción inválida. Elige 1 o 2.")
     
-    # Asegurar que exista la tabla de resúmenes (por si acaso no se creó)
+    # Ensure conversation_summaries table exists (idempotent, used by both branches)
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS conversation_summaries (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                contact_phone TEXT NOT NULL,
-                period TEXT NOT NULL,
-                summary TEXT NOT NULL,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY(contact_phone) REFERENCES contacts(phone),
-                UNIQUE(contact_phone, period)
-            )
-        """)
+        ensure_schema(cursor)
         conn.commit()
         conn.close()
     except Exception as e:
@@ -1277,9 +1401,6 @@ def main():
 
         conn.close()
         
-        # Compilar el reporte completo leyendo TODOS los perfiles de la BD local
-        compilar_reporte_local(db_path)
-        
         lote_elapsed = time.time() - lote_start_time
         
         # Limpiar barra antes de imprimir estadísticas
@@ -1323,7 +1444,6 @@ def main():
         print(f" Tokens de Entrada totales: {global_prompt_tokens}")
         print(f" Tokens de Salida totales: {global_candidate_tokens}")
         print(f" Tokens Totales consumidos: {global_total_tokens}")
-    print(f" Reporte unificado disponible en: {report_path.name}")
     print("=========================================================\n")
 
 if __name__ == "__main__":
