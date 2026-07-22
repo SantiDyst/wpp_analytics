@@ -1472,34 +1472,34 @@ def main():
                     # will be replaced below)
                     print(f"[INFO] Master context en formato legacy (<24h pero no JSON). "
                           "Generando nuevo contexto maestro.")
-            if needs_fresh_call:
-                # 7b. Aggregate and synthesize
-                distribution, master_input = aggregate_for_master(summaries, cursor, phone_to_name)
-                if master_input:
-                    master_sections, pt, ct, tt = master_call_with_retry(master_input)
-                    master_elapsed = time.time() - master_start_time
-                    if master_sections:
-                        # Persist as JSON string (not raw text)
-                        try:
-                            json_summary = json.dumps(master_sections, ensure_ascii=False)
-                            cursor.execute("""
-                                INSERT OR REPLACE INTO conversation_summaries
-                                    (contact_phone, period, summary, updated_at)
-                                VALUES ('__MAESTRO__', 'master', ?, CURRENT_TIMESTAMP)
-                            """, (json_summary,))
-                            conn.commit()
-                        except Exception as e:
-                            print(f"[WARN] No se pudo persistir el contexto maestro en SQLite. "
-                                  "La síntesis se mantiene en memoria para esta corrida.")
-                        # Log master-call token accounting
-                        registrar_logs_v3(db_name, pt, ct, tt, master_elapsed)
-                    else:
-                        # Master call failed — log failure
-                        registrar_logs_v3(db_name, 0, 0, 0, master_elapsed)
-                master_meta = {
-                    "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                    "labels_distribution": distribution if master_sections else {},
-                }
+    distribution, master_input = aggregate_for_master(summaries, cursor, phone_to_name)
+    if needs_fresh_call and master_input:
+        # 7b. Synthesize (master_input pre-aggregated above)
+        master_sections, pt, ct, tt = master_call_with_retry(master_input)
+        master_elapsed = time.time() - master_start_time
+        if master_sections:
+            # Persist as JSON string (not raw text)
+            try:
+                json_summary = json.dumps(master_sections, ensure_ascii=False)
+                cursor.execute("""
+                    INSERT OR REPLACE INTO conversation_summaries
+                        (contact_phone, period, summary, updated_at)
+                    VALUES ('__MAESTRO__', 'master', ?, CURRENT_TIMESTAMP)
+                """, (json_summary,))
+                conn.commit()
+            except Exception as e:
+                print(f"[WARN] No se pudo persistir el contexto maestro en SQLite. "
+                      "La síntesis se mantiene en memoria para esta corrida.")
+            # Log master-call token accounting
+            registrar_logs_v3(db_name, pt, ct, tt, master_elapsed)
+        else:
+            # Master call failed — log failure
+            registrar_logs_v3(db_name, 0, 0, 0, master_elapsed)
+    if master_sections:
+        master_meta = {
+            "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "labels_distribution": distribution,
+        }
 
         # Build sample_for_output: (phone, name, summary_text, conversation_snippet)
         # conversation_snippet is last ~200 chars of extracted conversation.

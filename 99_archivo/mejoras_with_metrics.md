@@ -1,9 +1,31 @@
 # Mejoras del Analizador de Contexto — Roadmap `with-metrics`
 
 **Proyecto:** wpp_analytics
-**Fecha:** 2026-07-21
+**Fecha original:** 2026-07-21
+**Última actualización:** 2026-07-22
 **Origen:** Evaluación del reporte `contexto_20260721_111207.md`
-**Alcance:** Mejoras al script `scripts/analizar_contexto.py` (rama `--with-metrics`) y a los outputs `.md` / `.json`.
+**Alcance original:** Mejoras al script `scripts/analizar_contexto.py` (rama `--with-metrics`) y a los outputs `.md` / `.json`.
+
+---
+
+## Estado de Implementación (al 2026-07-22)
+
+| Item | Estado | Notas |
+|------|--------|-------|
+| **P0.1** — Fix bug `stratification` vacío | ✅ Hecho | El JSON `stratification` ahora se popula con 231 entradas `phone → tier`. |
+| **P0.2** — Sección "Ejemplos de Diálogo" | ✅ Hecho | Sección 5 del `.md`, 2-3 snippets por categoría de vínculo. |
+| **P0.3** — Métricas de tiempo (hora + mediana) | ✅ Hecho | Sección 6 del `.md`. Pico horario detectado a las 09:00 (14.5%). |
+| **P1.1** — Sentimiento por categoría | ✅ Hecho | Sección 8 del `.md`. Distribución por Cliente/Empleado/Proveedor/Otro. |
+| **P1.2** — Triggers de Escalación | ✅ Hecho | Sección 7 del `.md`. Regex sobre snippets, frases canónicas por categoría. |
+| **P1.3** — Exportar `intents.json` | 🔲 Pendiente | Diferido. Formato NLU estándar (Dialogflow/Rasa/Botpress). Esfuerzo: ~6 h. |
+| **P2.1** — Re-correr con `sample_size=0.50` | ⏸️ Pausado | Decisión del usuario: gasto de tokens sin beneficio claro en producción actual. |
+| **P2.2** — Tracking histórico (`contexto_history.csv`) | 🔲 Pendiente | Útil cuando haya ≥ 3 corridas en producción. |
+| **P2.3** — Prompt versioning externo | 🔲 Pendiente | Migrar strings hardcodeados a `prompts/*.txt`. |
+
+**Bug adicional arreglado el 2026-07-22**: `master_meta` se calculaba solo en el path de fresh call del master context, lo que dejaba `master_context.generated_at` y `master_context.labels_distribution` vacíos en el JSON cuando se reusaba el cache SQLite (<24h). Ahora se setean siempre que `master_sections` esté populated.
+
+---
+
 
 ---
 
@@ -153,11 +175,12 @@ El reporte ejecutivo del 2026-07-21 (231 contactos muestreados de 774, base `aut
 
 ## 6. Definition of Done del roadmap completo
 
-- [ ] `contexto_*.json` con `stratification` no vacío
-- [ ] `contexto_*.md` con sección "Ejemplos de Diálogo" (≥ 2 por categoría)
-- [ ] `contexto_*.md` con sección "Patrones de Tiempo"
-- [ ] `contexto_*.md` con distribución de sentimiento por categoría
-- [ ] `contexto_*.md` con "Triggers de Escalación"
-- [ ] `intents_*.json` parseable y completo
-- [ ] `contexto_history.csv` con ≥ 3 corridas registradas
-- [ ] Prompts externalizados en `prompts/*.txt`
+- [x] `contexto_*.json` con `stratification` no vacío
+- [x] `contexto_*.md` con sección "Ejemplos de Diálogo" (≥ 2 por categoría)
+- [x] `contexto_*.md` con sección "Patrones de Tiempo"
+- [x] `contexto_*.md` con distribución de sentimiento por categoría
+- [x] `contexto_*.md` con "Triggers de Escalación"
+- [x] `master_context.generated_at` y `master_context.labels_distribution` populados en JSON (fix del 2026-07-22)
+- [ ] `intents_*.json` parseable y completo — **P1.3, diferido**
+- [ ] `contexto_history.csv` con ≥ 3 corridas registradas — **P2.2**
+- [ ] Prompts externalizados en `prompts/*.txt` — **P2.3**

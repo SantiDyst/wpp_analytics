@@ -16,8 +16,9 @@ Este repositorio independiente se encarga de analizar los datos históricos guar
 #### Instrucciones de Configuración y Uso
 
 1.  **Configurar Clave de API:**
-    *   El archivo **`.env`** ya existe en la raíz con tu clave de Gemini.
-    *   Si necesitás regenerarlo, agregá: `GEMINI_API_KEY=tu_clave_aqui`
+    *   El archivo **`.env`** ya existe en la raíz con tu clave.
+    *   Si necesitás regenerarlo, agregá: `MINIMAX_API_KEY=tu_clave_aqui` (recomendado, el script detecta por prefijo `sk-*` y enruta a `api.minimax.io` con modelo `MiniMax-M3`).
+    *   Alternativa legacy: `GEMINI_API_KEY=tu_clave_aqui` (sigue funcionando, enrutado a Gemini).
 
 2.  **Ejecutar el Análisis General:**
     *   Doble clic en `ejecutar_analisis.bat`, o:
@@ -53,8 +54,9 @@ wpp_analytics/
 ├── ejecutar_analisis.bat         ← lanzador del análisis principal
 │
 ├── scripts/                      ← scripts ejecutables
-│   ├── analizar_contexto.py      ← pipeline Etapa 1 (perfilado general)
-│   ├── buscar_datos.py           ← buscador dinámico (Etapa 3 inicial)
+│   ├── analizar_contexto.py      ← pipeline Etapa 1 (perfilado + reporte ejecutivo con master context)
+│   ├── buscar_datos.py           ← buscador dinámico (Etapa 3 inicial, taxonomía YAML)
+│   ├── bootstrap_taxonomy.py     ← materializa taxonomía_<cliente>_v1.yaml desde seed
 │   └── clean_db.py               ← limpieza de bloques <think> en perfiles guardados
 │
 ├── docs/                         ← documentación de referencia
@@ -66,22 +68,57 @@ wpp_analytics/
 │
 ├── outputs/                      ← archivos generados (ignorado por git)
 │   ├── logs.txt
-│   └── reporte_contexto_v2.md
+│   └── contexto_YYYYMMDD_HHMMSS.{md,json}   ← reporte ejecutivo + JSON pareado
 │
-├── taxonomias_seed/              ← taxonomías por industria (Fase 3)
+├── taxonomias_seed/              ← taxonomías por industria
+│   ├── general.yaml
+│   ├── salud.yaml
+│   ├── educacion.yaml
+│   ├── retail.yaml
+│   ├── personal.yaml
+│   └── medical_licenses.yaml
 │
-├── skills/                       ← empaquetado para agentes de IA (Fase 5)
+├── skills/                       ← empaquetado para agentes de IA (Fase 5 — pendiente)
 │   └── whatsapp_assistant/
 │
-├── tests/                        ← tests automatizados (futuro)
+├── tests/                        ← tests automatizados (pendiente)
 │
-└── 99_archivo/                   ← histórico/deprecado (no tocar)
+└── 99_archivo/                   ← histórico/deprecado
+    └── mejoras_with_metrics.md   ← gap analysis P0/P1 (2026-07-21)
 ```
 
 ---
 
-#### Roadmap
+#### Salidas del Análisis (`contexto_*.md`)
 
-Ver [`PLAN_PRODUCTO.md`](./PLAN_PRODUCTO.md) para el plan completo de evolución del producto en 10 fases.
+El reporte ejecutivo generado por `analizar_contexto.py` incluye 8 secciones:
 
-Estado actual: **Fase 0 completada** (estructura ordenada + `buscar_datos.py` operativo).
+1. Contexto General del Entorno (master context en front-matter YAML)
+2. Temáticas o Categorías Más Comunes
+3. Dudas o Consultas Frecuentes
+4. Propuesta de Taxonomía
+5. Ejemplos de Diálogo
+6. Patrones de Tiempo (distribución horaria + mediana de resolución)
+7. Triggers de Escalación
+8. Sentimiento por Vínculo
+
+---
+
+#### Estado Actual (2026-07-22)
+
+**Fases completadas (archivadas en `openspec/changes/archive/`):**
+- Phase 1 — context-analyzer
+- Phase 2 — taxonomy-yaml (loader en `buscar_datos.py`)
+- Phase 3 — industry-taxonomy-seeds (6 YAMLs en `taxonomias_seed/`)
+- Phase 4a — analyzer-bugfixes (cache check, DRY extraction, fail-fast, permissions, token logging)
+- Phase 4b — analyzer-contexto-maestro (prompt trim + master context synthesis)
+
+**Fases con planning abandonado (features ya implementadas):**
+- Phase 4c — analyzer-feedback-fixes
+- Phase 5 — executive-report
+
+**Pendiente para futuro:**
+- P1.3 — exportar `intents.json` con frases y acciones por categoría (formato NLU estándar)
+- Skills (`skills/whatsapp_assistant/`) y tests automatizados (`tests/`)
+
+Ver [`PLAN_PRODUCTO.md`](./PLAN_PRODUCTO.md) para el detalle del roadmap completo.

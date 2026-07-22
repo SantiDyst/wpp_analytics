@@ -213,18 +213,18 @@ Esto encaja con los 3 planes definidos en `propuesta_comercial.md`.
 
 #### Roadmap Concreto
 
-| Fase | Tarea | Archivos a tocar | Prioridad |
-|---|---|---|---|
-| **1** | Refactor `analizar_contexto.py`: muestreo estratificado + salida JSON + métricas base. | `analizar_contexto.py` | Alta |
-| **2** | Refactor `buscar_datos.py`: leer taxonomía desde YAML en lugar de hardcoded. | `buscar_datos.py` | Alta |
-| **3** | Crear `taxonomias_seed/` con YAMLs por industria. | `taxonomias_seed/salud.yaml`, `educacion.yaml`, etc. | Alta |
-| **4** | Agregar modos nuevos a `buscar_datos.py` (`taxonomy`, `trend`, `sentiment`, `alerts`). | `buscar_datos.py` | Media |
-| **5** | Empaquetar Skill: `skills/whatsapp_assistant/` con `SKILL.md`. | `skills/whatsapp_assistant/SKILL.md`, `scripts/` | Media |
-| **6** | Integrar `rich` para UI amigable. | todos los scripts | Media |
-| **7** | Tablas SQLite de metadata (`clients`, `analysis_runs`, `taxonomies`). | nuevo `init_db.py` | Media |
-| **8** | Comparación temporal entre corridas. | nuevo `comparar_corridas.py` | Baja |
-| **9** | Dashboard web local (Flask + Chart.js). | nuevo `dashboard/app.py` | Baja |
-| **10** | Agente conversacional local (chatbot). | nuevo `chatbot.py` | Baja |
+| Fase | Tarea | Archivos a tocar | Prioridad | Estado |
+|---|---|---|---|---|
+| **1** | Refactor `analizar_contexto.py`: muestreo estratificado + salida JSON + métricas base. | `analizar_contexto.py` | Alta | ✅ Hecho (Phase 1, archivado) |
+| **2** | Refactor `buscar_datos.py`: leer taxonomía desde YAML en lugar de hardcoded. | `buscar_datos.py` | Alta | ✅ Hecho (Phase 2, archivado) |
+| **3** | Crear `taxonomias_seed/` con YAMLs por industria. | `taxonomias_seed/salud.yaml`, `educacion.yaml`, etc. | Alta | ✅ Hecho (Phase 3, archivado) |
+| **4** | Bugfixes del analyzer (cache check, DRY, fail-fast, permisos, token logging). | `analizar_contexto.py` | Media | ✅ Hecho (Phase 4a, archivado) |
+| **5** | Master Business Context (prompt trim + synthesis call). | `analizar_contexto.py` | Media | ✅ Hecho (Phase 4b, archivado) |
+| **6** | Métricas de tiempo (distribución horaria) + sentiment por vínculo + triggers de escalación. | `analizar_contexto.py` | Media | ✅ Hecho en código (2026-07-21) |
+| **7** | Empaquetar Skill: `skills/whatsapp_assistant/` con `SKILL.md`. | `skills/whatsapp_assistant/SKILL.md`, `scripts/` | Media | 🔲 Pendiente (directorio vacío) |
+| **8** | Tablas SQLite de metadata (`clients`, `analysis_runs`, `taxonomies`). | nuevo `init_db.py` | Media | 🔲 Pendiente |
+| **9** | Exportar `intents.json` para NLU (Dialogflow/Rasa/Botpress). | `analizar_contexto.py` | Baja | 🔲 Pendiente (P1.3 del roadmap `mejoras_with_metrics.md`) |
+| **10** | Dashboard web local (Flask + Chart.js). | nuevo `dashboard/app.py` | Baja | 🔲 Pendiente |
 
 ---
 
@@ -232,45 +232,58 @@ Esto encaja con los 3 planes definidos en `propuesta_comercial.md`.
 
 | Carpeta / Archivo | Rol | Estado |
 |---|---|---|
-| `LEEME.md` | README principal con instrucciones de uso. | Actualizado. |
-| `PLAN_PRODUCTO.md` | Este documento (plan maestro). | Actualizado. |
-| `ejecutar_analisis.bat` | Lanzador del análisis principal. | Actualizado. |
-| `scripts/analizar_contexto.py` | Pipeline de perfilado general (Etapa 1). | Funcional, requiere mejoras. |
-| `scripts/buscar_datos.py` | Buscador dinámico; carga taxonomía desde YAML (Fase 2 cerrada). | Funcional, requiere mejoras. |
+| `LEEME.md` | README principal con instrucciones de uso. | Actualizado (2026-07-22). |
+| `PLAN_PRODUCTO.md` | Este documento (plan maestro). | Actualizado (2026-07-22). |
+| `ejecutar_analisis.bat` | Lanzador del análisis principal. | Funcional. |
+| `scripts/analizar_contexto.py` | Pipeline de perfilado + reporte ejecutivo con master context y 8 secciones. | Funcional, estable. |
+| `scripts/buscar_datos.py` | Buscador dinámico; carga taxonomía desde YAML con fallback hardcoded. | Funcional, estable. |
+| `scripts/bootstrap_taxonomy.py` | Materializa `taxonomia_<cliente>_v1.yaml` desde el seed. | Funcional. |
 | `scripts/clean_db.py` | Limpia bloques `<think>` de perfiles guardados. | Funcional. |
 | `docs/propuesta_comercial.md` | 3 planes comerciales (Express / Activo / VIP). | Solo referencia. |
 | `docs/reporte_contexto.md` | Reporte de Reconocimientos Médicos (análisis previo). | Solo referencia. |
 | `docs/analytics_version_2.md` | Plan original de la V2 (perfilado por contacto). | Solo referencia. |
 | `docs/skills_feature.md` | Diseño de la Skill `whatsapp_assistant`. | Solo referencia (ahora integrado en este PLAN). |
 | `docs/sql_features.md` | Diagnóstico y propuestas de optimización SQL (FTS5, normalización). | Solo referencia (Fase futura). |
-| `outputs/` | Archivos generados (`logs.txt`, `reporte_contexto_v2.md`). | Ignorado por git. |
-| `taxonomias_seed/` | Taxonomías semilla por industria (Fase 3). | Contiene `medical_licenses.yaml` (Fase 2); faltan las otras industrias (Fase 3). |
-| `skills/whatsapp_assistant/` | Empaquetado de Skill para agentes IA (Fase 5). | Vacío, pendiente. |
-| `tests/` | Tests automatizados. | Vacío, pendiente. |
-| `99_archivo/` | Histórico/deprecado. | No tocar. |
-| `.env` | Configuración de API key (Gemini o compatible). | Activo. |
+| `outputs/` | Archivos generados (`logs.txt`, `contexto_*.{md,json}`). | Ignorado por git. |
+| `taxonomias_seed/` | Taxonomías semilla por industria. | 6 YAMLs: `general`, `salud`, `educacion`, `retail`, `personal`, `medical_licenses`. |
+| `skills/whatsapp_assistant/` | Empaquetado de Skill para agentes IA. | Directorio vacío, pendiente. |
+| `tests/` | Tests automatizados. | Directorio vacío, pendiente. |
+| `99_archivo/mejoras_with_metrics.md` | Gap analysis P0/P1 del 2026-07-21 (P0.1–P1.2 implementados, P1.3 pendiente). | Histórico de decisión. |
+| `.env` | Configuración de API key (MiniMax o Gemini compatible). | Activo. |
 
 ---
 
-#### Estado Actual del Proyecto (al 2026-07-04)
+#### Estado Actual del Proyecto (al 2026-07-22)
 
-**Hecho:**
-*   `scripts/analizar_contexto.py` funcional con perfilado individual por contacto, lotes, caché local, compilación de reporte V2 en `outputs/`.
-*   `scripts/buscar_datos.py` creado con modos `keyword` y `semantic`, soporte para taxonomía (hardcoded por ahora).
-*   Pruebas realizadas en `auto_wpp` con keyword ("acta") y semantic ("docentes que pidieron turno y no fueron contactados") → resultados coherentes con la taxonomía esperada.
-*   **Estructura del proyecto ordenada** (Fase 0): `scripts/`, `docs/`, `outputs/`, `taxonomias_seed/`, `skills/`, `tests/`.
-*   `.gitignore` actualizado para ignorar `outputs/`.
-*   `LEEME.md` y `PLAN_PRODUCTO.md` reflejan la nueva estructura.
+**Hecho y archivado (en `openspec/changes/archive/`):**
+*   **Phase 1 — context-analyzer** (2026-07-04): refactor de `analizar_contexto.py` con muestreo estratificado, salida dual JSON+MD, métricas base.
+*   **Phase 2 — taxonomy-yaml** (2026-07-04): `buscar_datos.py` carga taxonomía desde YAML con fallback hardcoded. CLI `bootstrap_taxonomy.py` para materializar.
+*   **Phase 3 — industry-taxonomy-seeds** (2026-07-04): 6 YAMLs en `taxonomias_seed/` (general, salud, educacion, retail, personal, medical_licenses).
+*   **Phase 4a — analyzer-bugfixes** (2026-07-06): cache check, DRY extraction (`procesar_chats_con_ia`), fail-fast auth, per-folder permissions, token logging.
+*   **Phase 4b — analyzer-contexto-maestro** (2026-07-06): prompt trim (2 campos) + master context synthesis call con persistencia en SQLite.
 
-**Cerrado en esta sesión (2026-07-04) — Fase 2 del roadmap:**
-*   **Fase 2 — taxonomía YAML externa** ✅: `scripts/buscar_datos.py` carga la taxonomía desde `outputs/taxonomia_<client>_v1.yaml` mediante la nueva función `load_taxonomy(client_name)` con fallback al string hardcoded si el YAML falta, está vacío, está malformado o `pyyaml` no está instalado. La función sanitiza el nombre de cliente (`re.sub(r"[^A-Za-z0-9_-]", "_", client_name)`) por seguridad de filename.
-*   Nuevo CLI **one-shot** `scripts/bootstrap_taxonomy.py` que materializa `outputs/taxonomia_<client>_v1.yaml` desde el seed `taxonomias_seed/medical_licenses.yaml`.
-*   Spec archivado en `openspec/changes/archive/2026-07-04-phase-2-taxonomy-yaml/` con su `archive-report.md`; main spec residente en `openspec/specs/taxonomy-yaml/spec.md` como fuente de verdad (7 requisitos REQ-001 a REQ-007, 8 escenarios).
-*   Commits del cierre: `e3534fb feat(taxonomy): phase 2 YAML taxonomy loader + bootstrap CLI` y `e682731 chore(openspec): archive phase-2-taxonomy-yaml and sync main spec` (sin push todavía).
-*   `LEEME.md` documenta `pip install pyyaml` como dependencia opcional (la pipeline sigue funcionando sin él, vía fallback).
+**Implementado en código (2026-07-21, sin ciclo SDD completo):**
+*   **Sección 5 — Ejemplos de Diálogo** en el `.md`.
+*   **Sección 6 — Patrones de Tiempo**: distribución horaria (pico detectado a las 09:00 con 14.5% del tráfico) + mediana de resolución por categoría.
+*   **Sección 7 — Triggers de Escalación**: regex sobre snippets para frases que indican derivación a humano.
+*   **Sección 8 — Sentimiento por Vínculo**: tono dominante por Cliente/Empleado/Proveedor/Otro.
+*   **Fix bug JSON writer** (2026-07-22): `master_meta` se calculaba solo en el path de fresh call; ahora se setea siempre que `master_sections` esté populated (sea por cache o por fresh call).
 
-**Pendiente (según roadmap):**
-*   Fases 1-10 listadas arriba.
+**Planning abandonado (features ya en producción):**
+*   **Phase 4c** (`phase-4-analyzer-feedback-fixes/`) y **Phase 5** (`phase-5-executive-report/`) — sus planning docs quedaron en `openspec/changes/` pero la mayoría de las features descritas ya están implementadas vía 4a/4b + las iteraciones manuales del 2026-07-21. No vale la pena cerrar el ciclo SDD completo.
+
+**Pendiente real:**
+*   **P1.3** — Exportar `intents.json` con frases y acciones por categoría (formato NLU estándar para Dialogflow/Rasa/Botpress). Definido en `99_archivo/mejoras_with_metrics.md`.
+*   **Phase 5/7** — Empaquetar Skill `whatsapp_assistant/` (directorio vacío).
+*   **Phase 8** — Tablas SQLite de metadata (`clients`, `analysis_runs`, `taxonomies`).
+*   **Phase 10** — Dashboard web local (Flask + Chart.js).
+*   **Pendiente cosmético**: renombrar `GEMINI_API_KEY` → `MINIMAX_API_KEY` en `.env` (el script ya detecta por prefijo `sk-*`).
+
+**Configuración actual:**
+*   Python 3.14, stdlib-first. Dependencias opcionales: `pyyaml` (taxonomías), `rich` (UI), `flask` (dashboard futuro).
+*   Proveedor de IA: **MiniMax-M3** (`api.minimax.io/v1/chat/completions`) cuando la clave empieza con `sk-*`; fallback a Gemini (`gemini-2.5-flash`) con cualquier otra clave.
+*   Encoding: UTF-8 forzado en stdout/stderr al inicio de cada script.
+*   Salidas generadas en `outputs/contexto_YYYYMMDD_HHMMSS.{md,json}` (master context en front-matter YAML + 8 secciones).
 
 ---
 
