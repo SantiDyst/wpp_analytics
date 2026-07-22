@@ -9,12 +9,31 @@ import urllib.request
 import urllib.error
 import time
 import random
+from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
 
 # TODO: Read from taxonomy YAML when Phase 3 lands.
 # Hardcoded for now: Cliente | Proveedor | Empleado | Familiar | Spam | Otro.
 LABELS = ["Cliente", "Proveedor", "Empleado", "Familiar", "Spam", "Otro"]
+
+
+# Lexical triggers that signal "este caso sale del alcance del agente actual".
+# Regex + human-readable label. Order matters for the .md output.
+ESCALATION_PATTERNS: list[tuple[str, str]] = [
+    (r"\bderivar(?:\s+a)?\b",             "Derivar a otro agente"),
+    (r"\bconsulte?\s+con\b",               "Indicar 'consulte con'"),
+    (r"\basesor[ií]a\b",                   "Mencionar asesoría (legal / de turno)"),
+    (r"\b[ld]e\s+(des)?bloque[oó]\b",      "Bloqueo / Desbloqueo de agente"),
+    (r"\bsupervisor\b|\bjefe\b",           "Escalar a supervisor / jefe"),
+    (r"\bno\s+(se\s+)?pued[eo]\b",         "Límite del agente actual"),
+    (r"\bm[eé]dico\s+fiscal\b",            "Pasar al médico fiscal"),
+    (r"3794\d{6}",                         "Número de otra línea interna"),
+]
+
+
+
+
 
 # Handle Windows console encoding for JSON/MD output (mirrors buscar_datos.py:21-24)
 try:
@@ -396,8 +415,12 @@ def escribir_reporte_ejecutivo(
     ts: time.struct_time,
     labels_distribution: dict[str, int],
     output_dir: Path,
+    examples_by_category: dict[str, list[str]] | None = None,
+    hourly_distribution: dict[int, int] | None = None,
+    resolution_by_category: dict[str, float] | None = None,
+    escalation_phrases: list[tuple[str, list[str]]] | None = None,
 ) -> Path:
-    """Write contexto_{ts}.md: YAML front-matter + 4 executive sections.
+    """Write contexto_{ts}.md: YAML front-matter + 4 executive sections + optional examples + time patterns + escalations.
 
     Returns the output Path. Does not raise on missing section — emits a
     placeholder line for each missing key.
@@ -449,12 +472,212 @@ def escribir_reporte_ejecutivo(
         "",
     ]
 
+    if examples_by_category:
+        body.extend(_build_examples_section(examples_by_category))
+
+    if hourly_distribution or resolution_by_category:
+        body.extend(
+            _build_time_section(hourly_distribution, resolution_by_category)
+        )
+
+    if escalation_phrases:
+        body.extend(_build_escalation_section(escalation_phrases))
+
+    if master_sections.get("sentimiento"):
+        body.extend(_build_sentiment_section(master_sections["sentimiento"]))
+
     with open(md_path, "w", encoding="utf-8") as f:
         f.write("\n".join(front_matter + body))
     return md_path
 
 
-def dual_output_writer(sample, metrics, summaries, db_name, ts, output_dir, stratification=None, total_dataset_size=None, master_sections: dict[str, str] | None = None, master_context: dict | None = None):
+def _build_examples_section(examples_by_category: dict[str, list[str]]) -> list[str]:
+    """Build the 'Ejemplos de Diálogo' section body.
+
+    Snippets are multi-line (each conversation line quoted separately).
+    Returns list of markdown lines (without trailing newline).
+    """
+    lines = ["## 5. Ejemplos de Diálogo", ""]
+    lines.append("Muestras reales de cómo los usuarios formularon consultas, agrupadas por categoría del vínculo.")
+    lines.append("")
+    for category in sorted(examples_by_category.keys()):
+        snippets = [s for s in examples_by_category[category] if s]
+        if not snippets:
+            continue
+        lines.append(f"### {category}")
+        lines.append("")
+        for snip in snippets[:3]:
+            snippet_lines = [s for s in snip.splitlines() if s]
+            if not snippet_lines:
+                continue
+            for snippet_line in snippet_lines:
+                lines.append(f"> {snippet_line}")
+            lines.append("")
+    return lines
+
+
+def compute_hourly_distribution(cursor, sample_phones: list[str]) -> dict[int, int]:
+    """Aggregate message count per hour-of-day for the sampled contacts.
+
+    Returns dict mapping hour (0-23) -> message count. Hours with no
+    messages are absent from the dict; callers should treat missing as 0.
+    """
+    if not sample_phones:
+        return {}
+    placeholders = ",".join("?" * len(sample_phones))
+    cursor.execute(
+        f"SELECT strftime('%H', timestamp) AS hour, COUNT(*) AS n "
+        f"FROM messages WHERE contact_phone IN ({placeholders}) "
+        f"GROUP BY hour ORDER BY hour",
+        tuple(sample_phones),
+    )
+    return {int(row[0]): int(row[1]) for row in cursor.fetchall()}
+
+
+def compute_resolution_by_category(
+    metrics: dict, phone_to_category: dict[str, str]
+) -> dict[str, float]:
+    """Median case duration (days) per category from first_message / last_message.
+
+    Skips contacts with missing or unparseable timestamps.
+    """
+    durations_by_cat: dict[str, list[float]] = {}
+    for phone, cat in phone_to_category.items():
+        m = metrics.get(phone, {})
+        first = m.get("first_message")
+        last = m.get("last_message")
+        if not first or not last:
+            continue
+        try:
+            d1 = datetime.fromisoformat(first)
+            d2 = datetime.fromisoformat(last)
+            days = (d2 - d1).total_seconds() / 86400.0
+        except (ValueError, TypeError):
+            continue
+        if days < 0:
+            continue
+        durations_by_cat.setdefault(cat, []).append(days)
+    return {
+        cat: statistics.median(durations)
+        for cat, durations in durations_by_cat.items()
+        if durations
+    }
+
+
+def extract_escalation_phrases(
+    snippets_by_phone: dict[str, str],
+    max_per_pattern: int = 3,
+) -> list[tuple[str, list[str]]]:
+    """Find examples of escalation triggers in conversation snippets.
+
+    For each (pattern, label) in ESCALATION_PATTERNS, scan all snippets
+    and return up to ``max_per_pattern`` matching lines that look like
+    real chat messages. Only patterns with at least one match are returned.
+    """
+    results: list[tuple[str, list[str]]] = []
+    compiled = [(re.compile(pat, re.IGNORECASE), label) for pat, label in ESCALATION_PATTERNS]
+    for regex, label in compiled:
+        matches: list[str] = []
+        for snippet in snippets_by_phone.values():
+            if not snippet or len(matches) >= max_per_pattern:
+                continue
+            for line in snippet.splitlines():
+                line = line.strip()
+                if not line or len(line) < 12:
+                    continue
+                if line.startswith("---"):
+                    continue
+                if regex.search(line):
+                    matches.append(line)
+                    break
+            if len(matches) >= max_per_pattern:
+                break
+        if matches:
+            results.append((label, matches))
+    return results
+
+
+def _build_time_section(
+    hourly_dist: dict[int, int] | None,
+    resolution_by_cat: dict[str, float] | None,
+) -> list[str]:
+    """Build the 'Patrones de Tiempo' section body."""
+    lines = ["## 6. Patrones de Tiempo", ""]
+
+    if hourly_dist:
+        lines.append("### Distribución de mensajes por hora del día")
+        lines.append("")
+        total = sum(hourly_dist.values()) or 1
+        peak_hour = max(hourly_dist, key=hourly_dist.get)
+        lines.append(f"Hora pico: **{peak_hour:02d}:00-{peak_hour:02d}:59** "
+                     f"({hourly_dist[peak_hour]} mensajes, "
+                     f"{hourly_dist[peak_hour] / total * 100:.1f}% del total).")
+        lines.append("")
+        lines.append("| Hora | Mensajes | % |")
+        lines.append("|------|----------|---|")
+        for hour in range(24):
+            n = hourly_dist.get(hour, 0)
+            pct = (n / total) * 100
+            bar = "█" * max(0, int(round(pct / 2)))
+            lines.append(f"| {hour:02d}:00 | {n} | {pct:5.1f}% {bar} |")
+        lines.append("")
+
+    if resolution_by_cat:
+        lines.append("### Mediana de duración del caso por categoría")
+        lines.append("")
+        lines.append("Mide días entre el primer y último mensaje del contacto en la muestra.")
+        lines.append("")
+        lines.append("| Categoría | Contactos | Mediana (días) |")
+        lines.append("|-----------|-----------|----------------|")
+        for cat in sorted(resolution_by_cat.keys()):
+            days = resolution_by_cat[cat]
+            lines.append(f"| {cat} | (ver JSON) | {days:.1f} |")
+        lines.append("")
+
+    return lines
+
+
+def _build_escalation_section(
+    escalations: list[tuple[str, list[str]]] | None,
+) -> list[str]:
+    """Build the 'Triggers de Escalación' section body.
+
+    Each entry is a (label, matching_lines) pair produced by
+    ``extract_escalation_phrases``. Empty list = section omitted.
+    """
+    if not escalations:
+        return []
+    lines = ["## 7. Triggers de Escalación", ""]
+    lines.append("Frases reales que aparecen cuando un caso sale del alcance del agente actual. Útiles para que el bot sepa cuándo escalar a un humano.")
+    lines.append("")
+    for label, matches in escalations:
+        if not matches:
+            continue
+        lines.append(f"### {label}")
+        lines.append("")
+        for match in matches:
+            lines.append(f"> {match}")
+        lines.append("")
+    return lines
+
+
+def _build_sentiment_section(sentiment_md: str | None) -> list[str]:
+    """Build the 'Sentimiento por Vínculo' section body.
+
+    The master pass already returns a formatted markdown block from the LLM;
+    we just wrap it with a section header.
+    """
+    if not sentiment_md or not sentiment_md.strip():
+        return []
+    lines = ["## 8. Sentimiento por Vínculo", ""]
+    lines.append("Tono emocional dominante por tipo de vínculo. Útil para que el bot ajuste el tono (empático vs. ejecutivo) según a quién está respondiendo.")
+    lines.append("")
+    for line in sentiment_md.splitlines():
+        lines.append(line if line.strip() else "")
+    return lines
+
+
+def dual_output_writer(sample, metrics, summaries, db_name, ts, output_dir, stratification=None, total_dataset_size=None, master_sections: dict[str, str] | None = None, master_context: dict | None = None, examples_by_category: dict[str, list[str]] | None = None, hourly_distribution: dict[int, int] | None = None, resolution_by_category: dict[str, float] | None = None, escalation_phrases: list[tuple[str, list[str]]] | None = None):
     """Write dual output: contexto_{ts}.json + contexto_{ts}.md with YAML front-matter.
 
     stratification: optional dict mapping phone -> tier name ("low" | "mid" | "high").
@@ -544,6 +767,10 @@ def dual_output_writer(sample, metrics, summaries, db_name, ts, output_dir, stra
             ts=ts,
             labels_distribution=labels_dist,
             output_dir=output_dir,
+            examples_by_category=examples_by_category,
+            hourly_distribution=hourly_distribution,
+            resolution_by_category=resolution_by_category,
+            escalation_phrases=escalation_phrases,
         )
     else:
         # Legacy YAML-only format (backward compat for callers still using master_context)
@@ -680,7 +907,7 @@ MASTER_SYNTHESIS_PROMPT = (
     "muestra estratificada de conversaciones reales de WhatsApp, agrupadas "
     "por Vínculo Comercial. Cada contacto incluye Temas Clave (resumidos por "
     "IA) y un fragmento crudo de su conversación.\n\n"
-    "Produce un Reporte Ejecutivo estructurado en EXACTAMENTE cuatro secciones, "
+    "Produce un Reporte Ejecutivo estructurado en EXACTAMENTE cinco secciones, "
     "cada una iniciando con su encabezado Markdown en una línea propia. "
     "Respeta los encabezados al pie de la letra (sin renombrar):\n\n"
     "## 1. Contexto General del Entorno\n"
@@ -701,13 +928,19 @@ MASTER_SYNTHESIS_PROMPT = (
     "  - <Categoría nivel 1>\n"
     "    - <Subcategoría nivel 2>\n"
     "      - <Tema nivel 3>: ejemplo1, ejemplo2]\n\n"
+    "## 5. Distribución de Sentimiento por Vínculo\n"
+    "[Para cada Vínculo Comercial de la muestra (Cliente, Empleado, Proveedor, "
+    "Otro, etc.), una línea con: '- **<Vínculo>:** dominante=<positivo|neutral|"
+    "negativo|frustrado>, secundario=<otro>, evidencia=<una cita textual del "
+    "snippet que justifique el dominante>. Si no hay datos suficientes para "
+    "alguna categoría, omitir.]\n\n"
     "Restricciones:\n"
     "- Idioma: español.\n"
     "- Tono: ejecutivo, denso, sin disclaimers ni frases de cortesía.\n"
     "- Longitud total: 500-800 palabras. Si te quedas corto, profundiza; "
     "si te excedes, recorta las evidencias a una línea cada una.\n"
     "- NO inventes datos. Cita solo lo respaldado por los snippets.\n"
-    "- NO incluyas secciones adicionales fuera de las cuatro.\n\n"
+    "- NO incluyas secciones adicionales fuera de las cinco.\n\n"
     "Muestra de contactos:\n{master_input}"
 )
 
@@ -719,13 +952,13 @@ class MasterCallEmptyResponse(ValueError):
 
 
 def _parse_master_sections(text: str) -> dict[str, str] | None:
-    """Parse the 4-section master response into a dict.
+    """Parse the 5-section master response into a dict.
 
-    Splits on ``## 1.``, ``## 2.``, ``## 3.``, ``## 4.`` markers,
+    Splits on ``## 1.``, ``## 2.``, ``## 3.``, ``## 4.``, ``## 5.`` markers,
     normalizes keys to ``contexto_general``, ``tematicas``, ``dudas``,
-    ``propuesta_taxonomia``, and returns the dict.
+    ``propuesta_taxonomia``, ``sentimiento``, and returns the dict.
 
-    Returns None if any of the four markers is missing (degrades gracefully
+    Returns None if any of the five markers is missing (degrades gracefully
     so the caller can fall back to a fresh master call).
     """
     if not text:
@@ -737,6 +970,7 @@ def _parse_master_sections(text: str) -> dict[str, str] | None:
         "2": "tematicas",
         "3": "dudas",
         "4": "propuesta_taxonomia",
+        "5": "sentimiento",
     }
 
     sections: dict[str, str] = {}
@@ -1220,8 +1454,19 @@ def main():
                 saved_summary = cached[0] or ""
                 try:
                     master_sections = json.loads(saved_summary)
-                    print(f"[INFO] Master context reutilizado de {cached[1]} (<24h).")
-                    needs_fresh_call = False
+                    # Schema check: if missing new sections, force fresh call
+                    # (avoids stale cache after prompt format changes)
+                    _required_keys = {
+                        "contexto_general", "tematicas", "dudas",
+                        "propuesta_taxonomia", "sentimiento",
+                    }
+                    if not _required_keys.issubset(master_sections.keys()):
+                        print(f"[INFO] Master context cacheado en {cached[1]} pero "
+                              f"sin secciones nuevas. Regenerando.")
+                        needs_fresh_call = True
+                    else:
+                        print(f"[INFO] Master context reutilizado de {cached[1]} (<24h).")
+                        needs_fresh_call = False
                 except json.JSONDecodeError:
                     # Legacy phase-4b row — force fresh call (master_sections stays None,
                     # will be replaced below)
@@ -1266,10 +1511,15 @@ def main():
             muestra = extraer_muestra_contacto(cursor, p, name)
             snippet = ""
             if muestra:
-                snippet_lines = muestra.splitlines()[-12:]
-                snippet = " | ".join(snippet_lines)[-200:]
+                snippet_lines = muestra.splitlines()[-8:]
+                snippet_text = "\n".join(snippet_lines)
+                if len(snippet_text) > 500:
+                    snippet_text = snippet_text[:500]
+                snippet = snippet_text
             sample_for_output.append((p, name, summary_text, snippet))
 
+        # P0.3: time metrics — both queries need the live cursor
+        hourly_distribution = compute_hourly_distribution(cursor, sample_phones)
         conn.close()
 
         # 8. Dual output
@@ -1281,6 +1531,38 @@ def main():
             for phone in phones:
                 stratification_map[phone] = tier_name
 
+        # Build examples_by_category: 2-3 conversation snippets per contact category.
+        # Category extracted from the LLM-generated profile_summary (format: **Vínculo X: ...**).
+        examples_by_category: dict[str, list[str]] = {}
+        category_pattern = re.compile(r'\*\*\s*V[ií]nculo[^:*]+:\*\*\s+(.+?)(?:\n|$)', re.IGNORECASE)
+        phone_to_category: dict[str, str] = {}
+        for phone, name, summary_text, snippet in sample_for_output:
+            if summary_text:
+                match = category_pattern.search(summary_text)
+                phone_to_category[phone] = (
+                    match.group(1).strip() if match else "Sin clasificar"
+                )
+            if not summary_text or not snippet:
+                continue
+            match = category_pattern.search(summary_text)
+            category = match.group(1).strip() if match else "Sin clasificar"
+            bucket = examples_by_category.setdefault(category, [])
+            if len(bucket) < 3:
+                bucket.append(snippet)
+            if all(len(v) >= 3 for v in examples_by_category.values()):
+                break
+
+        resolution_by_category = compute_resolution_by_category(
+            metrics, phone_to_category
+        )
+
+        snippets_by_phone = {
+            phone: snippet
+            for phone, _name, _summary, snippet in sample_for_output
+            if snippet
+        }
+        escalation_phrases = extract_escalation_phrases(snippets_by_phone)
+
         # 8a. MD writer (replaces compilar_reporte_local)
         escribir_reporte_ejecutivo(
             master_sections=master_sections or {},
@@ -1289,6 +1571,10 @@ def main():
             ts=ts,
             labels_distribution=master_meta.get("labels_distribution", {}),
             output_dir=args.output_dir,
+            examples_by_category=examples_by_category,
+            hourly_distribution=hourly_distribution,
+            resolution_by_category=resolution_by_category,
+            escalation_phrases=escalation_phrases,
         )
 
         # 8b. JSON writer (unchanged signature, extended payload)
@@ -1302,6 +1588,10 @@ def main():
                 "generated_at": master_meta.get("generated_at", ""),
                 "labels_distribution": master_meta.get("labels_distribution", {}),
             },
+            examples_by_category=examples_by_category,
+            hourly_distribution=hourly_distribution,
+            resolution_by_category=resolution_by_category,
+            escalation_phrases=escalation_phrases,
         )
         print(f"[INFO] Salida JSON: {json_path.name}")
         print(f"[INFO] Reporte ejecutivo: contexto_{time.strftime('%Y%m%d_%H%M%S', ts)}.md")
